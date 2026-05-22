@@ -1,0 +1,11 @@
+{
+  "preset": "phase_a",
+  "keras_params": 112121,
+  "keras_accuracy": 0.916,
+  "tflite_fp32_size_bytes": 454364,
+  "tflite_fp32_accuracy": 0.916,
+  "tflite_int8_size_bytes": 137888,
+  "tflite_int8_accuracy": 0.918,
+  "tflite_int8_latency_ms_pc": 0.1992006760001459,
+  "n_eval_samples": 500
+}

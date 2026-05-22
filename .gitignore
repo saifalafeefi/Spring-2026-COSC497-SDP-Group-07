@@ -1,0 +1,39 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+ENV/
+
+# --- IDE / Editor ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Dataset (3.8 GB — too big for GitHub) ---
+# Download from the UBC PPG dataset source and place at the path below.
+Code & Data/
+
+# --- TensorFlow / Keras logs and checkpoints ---
+*.ckpt
+checkpoints/
+logs/
+tensorboard/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+/docs

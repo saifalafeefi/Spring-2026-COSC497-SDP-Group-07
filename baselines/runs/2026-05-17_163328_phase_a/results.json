@@ -1,0 +1,41 @@
+{
+  "config_name": "phase_a",
+  "test_accuracy": 0.9242779016494751,
+  "test_loss": 0.10297463834285736,
+  "macro_f1": 0.8684639302264953,
+  "per_class_f1": {
+    "cardiac": 0.9499343708981811,
+    "non_cardiac": 0.9537459283387623,
+    "occlusion": 0.7017114914425427
+  },
+  "per_class_precision": {
+    "cardiac": 0.9601971190295678,
+    "non_cardiac": 0.9219143576826196,
+    "occlusion": 0.6982968369829684
+  },
+  "per_class_recall": {
+    "cardiac": 0.9398886827458256,
+    "non_cardiac": 0.9878542510121457,
+    "occlusion": 0.7051597051597052
+  },
+  "confusion_matrix": [
+    [
+      2533,
+      41,
+      121
+    ],
+    [
+      6,
+      732,
+      3
+    ],
+    [
+      99,
+      21,
+      287
+    ]
+  ],
+  "train_time_s": 700.5953814983368,
+  "epochs_run": 76,
+  "n_params": 112121
+}

@@ -1,0 +1,40 @@
+﻿
+Proposing Senior Design Project Idea Form
+
+Project Title
+
+Edge-AI Powered Remote Health Monitoring and Early Risk Detection System
+
+Supervisor(s) Name(s) and Department affiliation
+
+Dr. Emadeldeen Eldele, Computer Science
+
+Abstract 
+
+The increasing need for continuous and accessible healthcare has created demand for intelligent monitoring systems capable of detecting early signs of medical risk. Traditional healthcare delivery remains limited by hospital-centered monitoring, which is often expensive and difficult to scale. 
+
+Recent advances in wearable devices now enable continuous collection of physiological signals such as heart rate, SpO₂, and accelerometer data. The challenge lies in analyzing this data in real time, extracting meaningful features, and identifying anomalies under the constraints of limited bandwidth, computing power, and privacy concerns.
+
+This project proposes the development of a prototype remote health monitoring framework that integrates low-cost wearable sensors with edge-AI for anomaly detection. The system will preprocess incoming time series signals, apply filtering and feature extraction, and employ both statistical learning models and lightweight neural networks (e.g., CNNs, autoencoders) to identify abnormal patterns associated with health risks. A real-time dashboard will visualize the monitored signals, provide alerts, and allow continuous health status tracking.
+
+By incorporating edge computing, the system will minimize latency and reduce dependence on cloud resources, while also improving energy efficiency and scalability. The project enables early detection of health risks, supporting remote care, and advancing the UAE’s digital health initiatives. As an extension, TinyML deployment for on-device detection may also be explored, contributing to privacy-preserving and low-power healthcare solutions.
+
+Outcomes (list of expected outcomes for successful completion)
+• Prototype health monitoring system combining wearable sensors, AI-based anomaly detection, and visualization dashboard.
+• Implementation of both statistical and AI models for time series anomaly detection.
+• Real-time dashboard providing monitoring and alerting functionalities.
+• TinyML extension for on-device intelligence.
+
+Number of students and background and/or pre-requisites required
+3–4 students with background in programming (Python), signal processing, and introductory machine learning.
+
+
+Resources Required
+Wearable sensors (HR, SpO₂, accelerometer), Arduino or Raspberry Pi boards, laptop/PC, cloud hosting for dashboard deployment.
+
+Budget Required
+
+~AED 3500 (wearable sensors, microcontrollers, cloud resources).
+
+
+
