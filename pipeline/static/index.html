@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Edge-AI Health Monitor</title>
+<link rel="stylesheet" href="/vendor/uPlot.min.css">
+<style>
+  :root{
+    --bg:#0f1419; --panel:#1a2129; --panel2:#222b35; --line:#2c3742;
+    --text:#e6edf3; --muted:#8b98a5; --accent:#2E86AB;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    -webkit-text-size-adjust:100%}
+  header{display:flex;align-items:center;gap:10px;padding:12px 14px;
+    background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}
+  header h1{font-size:16px;margin:0;font-weight:600;flex:0 0 auto}
+  header .sub{font-size:11px;color:var(--muted);flex:1 1 auto}
+  #dot{width:10px;height:10px;border-radius:50%;background:#c0392b;flex:0 0 auto;
+    transition:background .3s}
+  #dot.on{background:#27ae60}
+  .controls{display:flex;gap:8px;flex:0 0 auto}
+  button{font:inherit;font-size:14px;font-weight:600;border:none;border-radius:8px;
+    padding:9px 14px;color:#fff;cursor:pointer;min-width:44px;min-height:40px}
+  button:active{transform:translateY(1px)}
+  #btnStart{background:var(--accent)} #btnPause{background:#5a6673} #btnReset{background:#3a4450}
+  nav{display:flex;background:var(--panel);border-bottom:1px solid var(--line);
+    position:sticky;top:57px;z-index:9}
+  nav button{flex:1;background:transparent;color:var(--muted);border-radius:0;
+    border-bottom:2px solid transparent;font-weight:600;padding:12px 4px}
+  nav button.active{color:var(--text);border-bottom-color:var(--accent)}
+  main{padding:12px;max-width:1100px;margin:0 auto}
+  .tab{display:none} .tab.active{display:block}
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);
+    margin:18px 0 8px}
+  .grid6{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  @media(min-width:680px){.grid6{grid-template-columns:repeat(6,1fr)}}
+  .metric{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  .metric .lbl{font-size:11px;color:var(--muted)} .metric .val{font-size:22px;font-weight:700;margin-top:2px}
+  .banner{padding:14px;border-radius:8px;text-align:center;font-weight:700;font-size:18px;color:#fff}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:8px}
+  .row{display:grid;grid-template-columns:1fr;gap:8px}
+  @media(min-width:760px){.row.live{grid-template-columns:2fr 1fr}.row.two{grid-template-columns:1fr 1fr}}
+  .cap{font-size:11px;color:var(--muted);margin:2px 0 6px}
+  .predbox{padding:18px;border-radius:8px;text-align:center;color:#fff}
+  .predbox .pc{font-size:13px;opacity:.85}.predbox .pl{font-size:30px;font-weight:800}
+  .bars{margin-top:8px}
+  .bar{display:flex;align-items:center;gap:8px;margin:5px 0;font-size:13px}
+  .bar .bn{width:92px;color:var(--muted);flex:0 0 auto}
+  .bar .bt{flex:1;background:var(--panel2);border-radius:5px;height:18px;overflow:hidden}
+  .bar .bf{height:100%;border-radius:5px;transition:width .25s}
+  .bar .bv{width:48px;text-align:right;flex:0 0 auto}
+  select{font:inherit;font-size:14px;width:100%;padding:10px;border-radius:8px;
+    background:var(--panel2);color:var(--text);border:1px solid var(--line)}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:600} td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .chart{width:100%}
+  .empty{color:var(--muted);padding:24px;text-align:center}
+  .uplot{font-family:inherit}
+  /* keep uPlot text legible on dark bg */
+  .u-axis{color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <span id="dot" title="connection"></span>
+  <h1>Edge-AI Health Monitor</h1>
+  <span class="sub" id="sub"></span>
+  <div class="controls">
+    <button id="btnStart">▶ Start</button>
+    <button id="btnPause">⏸</button>
+    <button id="btnReset">⟲</button>
+  </div>
+</header>
+
+<nav>
+  <button class="tabbtn active" data-tab="live">📊 Live</button>
+  <button class="tabbtn" data-tab="inspect">🔍 Inspector</button>
+  <button class="tabbtn" data-tab="sensors">📡 Sensors</button>
+</nav>
+
+<main>
+  <!-- live -->
+  <section class="tab active" id="tab-live">
+    <h2>Live Vitals</h2>
+    <div class="grid6">
+      <div class="metric"><div class="lbl">Heart rate</div><div class="val" id="m-hr">—</div></div>
+      <div class="metric"><div class="lbl">SpO₂</div><div class="val" id="m-spo2">—</div></div>
+      <div class="metric"><div class="lbl">Signal quality</div><div class="val" id="m-sq">—</div></div>
+      <div class="metric"><div class="lbl">Motion (σ)</div><div class="val" id="m-mot">—</div></div>
+      <div class="metric"><div class="lbl">Buffer</div><div class="val" id="m-buf">0/512</div></div>
+      <div class="metric"><div class="lbl">Elapsed</div><div class="val" id="m-el">0.0 s</div></div>
+    </div>
+
+    <h2>Fall Detection</h2>
+    <div class="banner" id="fallBanner" style="background:#7f8c8d">State: —</div>
+
+    <div class="row live">
+      <div class="panel">
+        <h2 style="margin-top:0">Live PPG Signal</h2>
+        <div class="cap">Raw IR-LED ADC counts · last 10 s</div>
+        <div class="chart" id="liveChart"></div>
+      </div>
+      <div class="panel">
+        <h2 style="margin-top:0">Current Prediction</h2>
+        <div id="predLive" class="empty">Waiting for first 10.24 s buffer…</div>
+        <div class="bars" id="predBars"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- inspector -->
+  <section class="tab" id="tab-inspect">
+    <h2>Prediction Inspector</h2>
+    <div class="cap">Pick any past prediction to see the exact window the model scored,
+      its per-class probabilities, and the engineered features.</div>
+    <select id="predSelect"></select>
+    <div id="inspectBody"><div class="empty">No predictions yet. Press ▶ Start.</div></div>
+  </section>
+
+  <!-- sensors -->
+  <section class="tab" id="tab-sensors">
+    <h2>All Sensors</h2>
+    <div class="row two">
+      <div class="panel"><h2 style="margin-top:0">PPG (MAX30102)</h2>
+        <div class="cap">Raw ADC counts · IR + RED</div><div class="chart" id="ppgChart"></div></div>
+      <div class="panel"><h2 style="margin-top:0">Accelerometer (MPU6050)</h2>
+        <div class="cap">Gravity-normalised (g) · X/Y/Z</div><div class="chart" id="accelChart"></div></div>
+    </div>
+    <div class="panel"><h2 style="margin-top:0">Accelerometer magnitude</h2>
+      <div class="cap">|accel| (g) · alarms above 2.5 g (fall heuristic)</div>
+      <div class="chart" id="magChart"></div></div>
+    <div class="banner" id="fallBanner2" style="background:#7f8c8d;margin-top:8px">State: —</div>
+  </section>
+</main>
+
+<script src="/vendor/uPlot.iife.min.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+
+// ---- constants from server hello ----
+let FS = 50, DISP = 500, CLASSES = [], FEAT_NAMES = [];
+const CLASS_DISPLAY = {cardiac:"Cardiac", non_cardiac:"Non-Cardiac", occlusion:"Occlusion"};
+const CLASS_COLOR   = {cardiac:"#2E86AB", non_cardiac:"#A23B72", occlusion:"#E07A5F"};
+const FALL_COLOR = {
+  "Normal":"#27ae60", "Free-fall":"#f39c12", "Awaiting impact":"#f39c12",
+  "Checking stillness":"#e67e22", "FALL":"#c0392b"
+};
+
+// ---- rolling data buffers (one window of every channel) ----
+const buf = {t:[], ir:[], red:[], ax:[], ay:[], az:[]};
+let preds = [];          // prediction history for the inspector
+let latestPred = null;
+let activeTab = "live";
+
+function resetBuffers(){
+  for(const k in buf) buf[k].length = 0;
+  preds = []; latestPred = null;
+  $("predLive").className = "empty";
+  $("predLive").textContent = "Waiting for first 10.24 s buffer…";
+  $("predBars").innerHTML = "";
+  rebuildPredSelect();
+  $("inspectBody").innerHTML = '<div class="empty">No predictions yet. Press ▶ Start.</div>';
+}
+
+// ---------- uPlot charts (lazily created so containers have a real width) ----------
+const AXIS = {stroke:"#8b98a5", grid:{stroke:"#2c3742", width:1}, ticks:{stroke:"#2c3742"}};
+function chartOpts(el, series, height){
+  return {
+    width: el.clientWidth || 600, height: height,
+    cursor:{show:false}, legend:{show:series.length>2},
+    scales:{x:{time:false}},
+    axes:[Object.assign({}, AXIS), Object.assign({}, AXIS)],
+    series:[{}].concat(series),
+  };
+}
+let liveChart=null, ppgChart=null, accelChart=null, magChart=null;
+
+function ensureLive(){
+  const el=$("liveChart");
+  if(!liveChart && el.clientWidth>0)
+    liveChart=new uPlot(chartOpts(el,[{label:"IR",stroke:"#2E86AB",width:1.5,points:{show:false}}],300),
+      [[0],[0]], el);
+}
+function ensureSensors(){
+  const a=$("ppgChart"), b=$("accelChart"), c=$("magChart");
+  if(!ppgChart && a.clientWidth>0)
+    ppgChart=new uPlot(chartOpts(a,[
+      {label:"IR",stroke:"#2E86AB",width:1.5,points:{show:false}},
+      {label:"RED",stroke:"#E07A5F",width:1.5,points:{show:false}}],260),[[0],[0],[0]],a);
+  if(!accelChart && b.clientWidth>0)
+    accelChart=new uPlot(chartOpts(b,[
+      {label:"X",stroke:"#2E86AB",width:1,points:{show:false}},
+      {label:"Y",stroke:"#A23B72",width:1,points:{show:false}},
+      {label:"Z",stroke:"#27ae60",width:1,points:{show:false}}],260),[[0],[0],[0],[0]],b);
+  if(!magChart && c.clientWidth>0)
+    magChart=new uPlot(chartOpts(c,[{label:"|accel|",stroke:"#f39c12",width:1.5,points:{show:false}}],200),
+      [[0],[0]],c);
+}
+
+function redrawActive(){
+  if(activeTab==="live" && liveChart)
+    liveChart.setData([buf.t, buf.ir]);
+  else if(activeTab==="sensors"){
+    if(ppgChart) ppgChart.setData([buf.t, buf.ir, buf.red]);
+    if(accelChart) accelChart.setData([buf.t, buf.ax, buf.ay, buf.az]);
+    if(magChart){
+      const mag = buf.ax.map((x,i)=>Math.hypot(x,buf.ay[i],buf.az[i]));
+      magChart.setData([buf.t, mag]);
+    }
+  }
+}
+
+// ---------- rendering helpers ----------
+function fmt(v,suffix,dp){ return (v===null||v===undefined)?"—":(v.toFixed(dp)+suffix); }
+
+function renderVitals(f){
+  const v=f.vit;
+  $("m-hr").textContent  = v.hr  ? Math.round(v.hr)+" BPM" : "—";
+  $("m-spo2").textContent= v.spo2? v.spo2.toFixed(1)+" %" : "—";
+  $("m-sq").textContent  = Math.round((v.sq||0)*100)+" %";
+  $("m-mot").textContent = (v.mot||0).toFixed(3)+" g";
+  $("m-buf").textContent = f.buf+"/512";
+  $("m-el").textContent  = f.elapsed.toFixed(1)+" s";
+  const col = FALL_COLOR[f.fall.st] || "#7f8c8d";
+  for(const id of ["fallBanner","fallBanner2"]){
+    const b=$(id); b.style.background=col;
+    b.textContent = id==="fallBanner2"
+      ? `FallDetector: ${f.fall.st}  ·  confirmed events: ${f.fall.ev}`
+      : `State: ${f.fall.st}`;
+  }
+}
+
+function probBars(target, probs){
+  let html="";
+  for(const c of CLASSES){
+    const p=probs[c]||0;
+    html+=`<div class="bar"><span class="bn">${CLASS_DISPLAY[c]}</span>`+
+      `<span class="bt"><span class="bf" style="width:${(p*100).toFixed(1)}%;background:${CLASS_COLOR[c]}"></span></span>`+
+      `<span class="bv">${(p*100).toFixed(0)}%</span></div>`;
+  }
+  target.innerHTML=html;
+}
+
+function renderLivePred(p){
+  const box=$("predLive");
+  box.className="predbox"; box.style.background=CLASS_COLOR[p.label];
+  box.innerHTML=`<div class="pc">Predicted class</div><div class="pl">${CLASS_DISPLAY[p.label]}</div>`+
+    `<div class="pc" style="margin-top:6px">Confidence ${(p.conf*100).toFixed(0)}% · ${p.lat} ms</div>`;
+  probBars($("predBars"), p.probs);
+}
+
+// ---------- inspector ----------
+function rebuildPredSelect(){
+  const sel=$("predSelect"); const prev=sel.value;
+  sel.innerHTML="";
+  for(const p of preds){
+    const o=document.createElement("option");
+    o.value=p.id;
+    o.textContent=`#${p.id} · t=${p.t}s · ${CLASS_DISPLAY[p.label]} (${(p.conf*100).toFixed(0)}%)`;
+    sel.appendChild(o);
+  }
+  if(preds.length){
+    sel.value = prev && preds.some(p=>p.id==prev) ? prev : preds[preds.length-1].id;
+  }
+}
+let inspectChart=null;
+function renderInspect(){
+  const sel=$("predSelect");
+  const p=preds.find(x=>x.id==sel.value);
+  const body=$("inspectBody");
+  if(!p){ body.innerHTML='<div class="empty">No predictions yet. Press ▶ Start.</div>'; return; }
+  const match = p.label===p.true;
+  const t = p.win_ir.map((_,i)=>+(i/FS).toFixed(3));
+  let feat="";
+  if(p.feat){
+    feat='<div class="panel"><h2 style="margin-top:0">Engineered features (z-scored)</h2><table>'+
+      '<tr><th>Feature</th><th class="num">Value</th></tr>';
+    FEAT_NAMES.forEach((n,i)=>{ feat+=`<tr><td>${n}</td><td class="num">${(p.feat[i]>=0?"+":"")+p.feat[i].toFixed(3)}</td></tr>`; });
+    feat+="</table></div>";
+  }
+  body.innerHTML=
+    `<div class="panel"><b>t=${p.t}s</b> · Predicted: <b>${CLASS_DISPLAY[p.label]}</b> · `+
+    `Confidence ${(p.conf*100).toFixed(0)}% · True: ${CLASS_DISPLAY[p.true]||"—"} · `+
+    `${match?"✅ match":"❌ mismatch"}</div>`+
+    `<div class="panel"><h2 style="margin-top:0">Window the model scored</h2><div class="chart" id="inspChart"></div></div>`+
+    `<div class="panel"><h2 style="margin-top:0">Per-class probabilities</h2><div class="bars" id="inspBars"></div></div>`+
+    feat;
+  probBars($("inspBars"), p.probs);
+  if(inspectChart){ inspectChart.destroy(); inspectChart=null; }
+  const el=$("inspChart");
+  inspectChart=new uPlot(chartOpts(el,[
+    {label:"IR",stroke:"#2E86AB",width:1.2,points:{show:false}},
+    {label:"RED",stroke:"#E07A5F",width:1.2,points:{show:false}}],300),
+    [t, p.win_ir, p.win_red], el);
+}
+
+// ---------- tabs ----------
+document.querySelectorAll(".tabbtn").forEach(btn=>{
+  btn.addEventListener("click",()=>{
+    activeTab=btn.dataset.tab;
+    document.querySelectorAll(".tabbtn").forEach(b=>b.classList.toggle("active",b===btn));
+    document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
+    $("tab-"+activeTab).classList.add("active");
+    // containers now have width → create + size charts
+    requestAnimationFrame(()=>{
+      ensureLive(); ensureSensors();
+      sizeCharts(); redrawActive();
+      if(activeTab==="inspect" && preds.length){ rebuildPredSelect(); renderInspect(); }
+    });
+  });
+});
+$("predSelect").addEventListener("change", renderInspect);
+
+function sizeCharts(){
+  const set=(c,id)=>{ if(c){ const w=$(id).clientWidth; if(w>0) c.setSize({width:w,height:c.height}); } };
+  set(liveChart,"liveChart"); set(ppgChart,"ppgChart");
+  set(accelChart,"accelChart"); set(magChart,"magChart");
+}
+window.addEventListener("resize",()=>{ sizeCharts(); redrawActive(); });
+
+// ---------- controls ----------
+let ws=null;
+function send(cmd){ if(ws&&ws.readyState===1) ws.send(JSON.stringify({cmd})); }
+$("btnStart").addEventListener("click",()=>send("start"));
+$("btnPause").addEventListener("click",()=>send("pause"));
+$("btnReset").addEventListener("click",()=>{ send("reset"); resetBuffers(); redrawActive(); });
+
+// ---------- websocket ----------
+function connect(){
+  const proto = location.protocol==="https:" ? "wss" : "ws";
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+  ws.onopen = ()=>{ $("dot").classList.add("on"); };
+  ws.onclose = ()=>{ $("dot").classList.remove("on"); setTimeout(connect,1000); };
+  ws.onmessage = ev=>{
+    const m=JSON.parse(ev.data);
+    if(m.type==="hello"){
+      FS=m.fs; DISP=m.disp; CLASSES=m.classes; FEAT_NAMES=m.feat_names;
+      $("sub").textContent=`${m.fs} Hz · ${(m.win/m.fs).toFixed(1)} s window · prediction every ${m.inf_s}s`;
+      requestAnimationFrame(()=>{ ensureLive(); ensureSensors(); sizeCharts(); });
+    }
+    else if(m.type==="hist"){ preds=m.preds.slice(); rebuildPredSelect(); }
+    else if(m.type==="state"){ /* running state — buttons are stateless, dot stays */ }
+    else if(m.type==="p"){
+      latestPred=m.p; preds.push(m.p); if(preds.length>200) preds.shift();
+      renderLivePred(m.p);
+      const sel=$("predSelect");
+      const wasLast = !sel.value || (preds.length>1 && sel.value==preds[preds.length-2].id);
+      rebuildPredSelect();
+      if(activeTab==="inspect"){ if(wasLast) sel.value=m.p.id; renderInspect(); }
+    }
+    else if(m.type==="f"){
+      // append new samples, trim to display window
+      for(let i=0;i<m.idx.length;i++){
+        buf.t.push(+(m.idx[i]/FS).toFixed(2));
+        buf.ir.push(m.ir[i]); buf.red.push(m.red[i]);
+        buf.ax.push(m.ax[i]); buf.ay.push(m.ay[i]); buf.az.push(m.az[i]);
+      }
+      const over=buf.t.length-DISP;
+      if(over>0){ for(const k in buf) buf[k].splice(0,over); }
+      renderVitals(m);
+      redrawActive();
+    }
+  };
+}
+connect();
+</script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+# pipeline-specific dependencies (in addition to baselines/requirements.txt)
+# web dashboard: FastAPI + WebSocket server; the browser draws with vendored uPlot.
+fastapi>=0.110
+uvicorn[standard]>=0.27
+websockets>=12.0

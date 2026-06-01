@@ -1,9 +1,8 @@
 """Convert a trained Keras model to TFLite int8 and verify it still works.
 
-The whole point: confirm before SDP2 Week 6 that our model converts cleanly,
-fits in the ESP32-S3 flash budget, and keeps acceptable accuracy after
-quantization. Catching this now (vs at Week 6 with parts already shipping)
-saves the project.
+The whole point: confirm early that our model converts cleanly, fits in the
+ESP32-S3 flash budget, and keeps acceptable accuracy after quantization.
+Catching this now (vs later, with parts already shipping) saves the project.
 
 Run from repo root:
   python3 baselines/quantize.py                    # latest phase_a run
