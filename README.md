@@ -88,8 +88,8 @@ README.md                            this file
 ## dataset (3.8 GB, not in git)
 
 the training data (UBC PPG, Khalili et al.) is too big for GitHub, so it isn't
-committed. to run the training code, download it and drop it at `Code & Data/`
-in the repo root, keeping the original folder structure:
+committed. to run the training code, download it from [Borealis Data](https://borealisdata.ca/dataset.xhtml?persistentId=doi:10.5683/SP3/HF0OS9)
+and drop it in the repo root, keeping this structure:
 
 ```
 Code & Data/

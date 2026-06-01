@@ -1,8 +1,8 @@
 # model performance
 
-final model results on the UBC PPG dataset (Khalili et al.). all numbers are on
-the held-out participant-disjoint test split — no patient overlap between train
-and test.
+final model results on the [UBC PPG dataset](https://borealisdata.ca/dataset.xhtml?persistentId=doi:10.5683/SP3/HF0OS9)
+(Khalili et al.). all numbers are on the held-out participant-disjoint test
+split — no patient overlap between train and test.
 
 ## dataset
 

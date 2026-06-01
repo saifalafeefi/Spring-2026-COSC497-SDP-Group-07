@@ -17,8 +17,10 @@ pip3 install -r baselines/requirements.txt
 pip3 install -r pipeline/requirements.txt
 
 # (optional, only if you'll retrain) put the UBC PPG dataset at Code & Data/
-# it's ~3.8 GB and not in the repo. see README.md.
+# it's ~3.8 GB and not in the repo — download link below.
 ```
+
+dataset download: [Borealis Data](https://borealisdata.ca/dataset.xhtml?persistentId=doi:10.5683/SP3/HF0OS9) (~3.8 GB, unzip into `Code & Data/`).
 
 ---
 
