@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Anomaly Monitor</title>
+<link rel="stylesheet" href="/vendor/uPlot.min.css">
+<style>
+  :root{--bg:#0f1419;--panel:#1a2129;--line:#2c3742;--text:#e6edf3;--muted:#8b98a5;--accent:#2E86AB}
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  header{display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--panel);
+    border-bottom:1px solid var(--line)}
+  header h1{font-size:16px;margin:0;font-weight:600}
+  header .sub{font-size:11px;color:var(--muted);flex:1}
+  #dot{width:10px;height:10px;border-radius:50%;background:#c0392b;transition:background .3s}
+  #dot.on{background:#27ae60}
+  button{font:inherit;font-size:14px;font-weight:600;border:none;border-radius:8px;
+    padding:9px 14px;color:#fff;cursor:pointer;min-height:40px}
+  #btnStart{background:var(--accent)} #btnPause{background:#5a6673} #btnReset{background:#3a4450}
+  main{padding:14px;max-width:1000px;margin:0 auto}
+  .banner{padding:22px;border-radius:10px;text-align:center;font-weight:800;font-size:26px;
+    color:#fff;background:#7f8c8d;transition:background .3s}
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:10px}
+  @media(min-width:640px){.grid{grid-template-columns:repeat(4,1fr)}}
+  .metric{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}
+  .metric .lbl{font-size:11px;color:var(--muted)} .metric .val{font-size:22px;font-weight:700;margin-top:2px}
+  .metric .hint{font-size:10px;color:var(--muted);margin-top:4px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:10px}
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:0 0 8px}
+  .levwrap{height:26px;background:#222b35;border-radius:6px;overflow:hidden;margin-top:6px;position:relative}
+  .levbar{height:100%;width:0;background:var(--accent);transition:width .3s,background .3s}
+  .levthr{position:absolute;top:0;bottom:0;width:2px;background:#c0392b}
+  .chart{width:100%}
+  .cap{font-size:11px;color:var(--muted);margin:2px 0 6px}
+  ul#log{list-style:none;margin:0;padding:0;font-size:13px;max-height:140px;overflow:auto}
+  ul#log li{padding:5px 2px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+  .help{font-size:12px;color:var(--muted);line-height:1.5;margin-top:10px}
+  .help code{color:var(--text)}
+</style>
+</head>
+<body>
+<header>
+  <span id="dot"></span>
+  <h1>Anomaly Monitor</h1>
+  <span class="sub" id="sub">stress detector · autoencoder</span>
+  <button id="btnStart">▶ Start</button>
+  <button id="btnPause">⏸</button>
+  <button id="btnReset">⟲</button>
+</header>
+<main>
+  <div class="banner" id="banner">press ▶ Start</div>
+
+  <div class="grid">
+    <div class="metric"><div class="lbl">Anomaly level</div><div class="val" id="m-level">—</div>
+      <div class="levwrap"><div class="levbar" id="levbar"></div><div class="levthr" id="levthr"></div></div>
+      <div class="hint" id="thrhint">flag threshold: —</div></div>
+    <div class="metric"><div class="lbl">Recon. error</div><div class="val" id="m-score">—</div>
+      <div class="hint" id="scorehint">threshold: —</div></div>
+    <div class="metric"><div class="lbl">Ground truth (WESAD)</div><div class="val" id="m-truth">—</div>
+      <div class="hint">what the subject was actually doing</div></div>
+    <div class="metric"><div class="lbl">Elapsed</div><div class="val" id="m-el">0 s</div>
+      <div class="hint" id="bufhint">window: —</div></div>
+  </div>
+
+  <div class="panel">
+    <h2>Live wrist PPG (BVP) — last 15 s</h2>
+    <div class="chart" id="bvpChart"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Anomaly level over time — last 3 min</h2>
+    <div class="cap" id="levcap">red dashed line = flag threshold · above it = stress flagged</div>
+    <div class="chart" id="levChart"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Flagged events (<span id="logcount">0</span>)</h2>
+    <ul id="log"><li style="color:var(--muted);border:0">none yet</li></ul>
+  </div>
+
+  <div class="help">
+    <b>how to read this:</b> the model only scores after a full <b>60-second</b> window fills
+    (the warm-up). it outputs a reconstruction error; we map that to an <b>anomaly level</b>
+    0–100%. when the smoothed level crosses the <b>flag threshold</b> (the red line), the banner
+    reads <code>STRESS FLAGGED</code>. the level is smoothed over ~5 s so single noisy windows
+    don't trip it. ground truth is the real WESAD label, shown so you can check the alignment.
+  </div>
+</main>
+
+<script src="/vendor/uPlot.iife.min.js"></script>
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+function setText(el,v){ if(el.textContent!==v) el.textContent=v; }   // only touch DOM on change → selection survives
+function fmtT(s){ const m=Math.floor(s/60), ss=Math.floor(s%60); return `${m}:${String(ss).padStart(2,"0")}`; }
+
+let FS=64, DISP=960, THR=0.5;
+const bvp={t:[],y:[]};
+const lev={t:[],y:[]};
+const LEVKEEP=180;            // ~3 min at 1 point/s
+let bvpChart=null, levChart=null;
+let lastSec=-1, prevFlag=false, events=[];
+
+const AXIS={stroke:"#8b98a5",grid:{stroke:"#2c3742",width:1},ticks:{stroke:"#2c3742"}};
+function opt(el,series,h,yr){return {width:el.clientWidth||600,height:h,cursor:{show:false},legend:{show:false},
+  scales:{x:{time:false},y:yr?{range:yr}:{}},axes:[Object.assign({},AXIS),Object.assign({},AXIS)],series:[{}].concat(series)};}
+function ensureCharts(){
+  const b=$("bvpChart"), l=$("levChart");
+  if(!bvpChart && b.clientWidth>0)
+    bvpChart=new uPlot(opt(b,[{stroke:"#2E86AB",width:1.2,points:{show:false}}],240),[[0],[0]],b);
+  if(!levChart && l.clientWidth>0)
+    levChart=new uPlot(opt(l,[{stroke:"#E07A5F",width:2,points:{show:false}},
+      {stroke:"#c0392b",width:1,dash:[6,4],points:{show:false}}],200,[0,1]),[[0],[0],[0]],l);
+}
+function drawBvp(){ if(bvpChart) bvpChart.setData([bvp.t,bvp.y]); }
+function drawLev(){ if(levChart) levChart.setData([lev.t,lev.y,lev.t.map(()=>THR)]); }
+window.addEventListener("resize",()=>{ if(bvpChart)bvpChart.setSize({width:$("bvpChart").clientWidth,height:240});
+  if(levChart)levChart.setSize({width:$("levChart").clientWidth,height:200}); drawBvp(); drawLev(); });
+
+let ws=null;
+function send(c){ if(ws&&ws.readyState===1) ws.send(JSON.stringify({cmd:c})); }
+$("btnStart").onclick=()=>send("start");
+$("btnPause").onclick=()=>send("pause");
+$("btnReset").onclick=()=>{ send("reset");
+  for(const k in bvp)bvp[k]=[]; for(const k in lev)lev[k]=[];
+  lastSec=-1; prevFlag=false; events=[]; renderLog();
+  $("banner").style.background="#7f8c8d"; setText($("banner"),"reset"); drawBvp(); drawLev(); };
+
+function renderLog(){
+  setText($("logcount"), String(events.length));
+  const ul=$("log");
+  if(!events.length){ ul.innerHTML='<li style="color:var(--muted);border:0">none yet</li>'; return; }
+  ul.innerHTML = events.slice(-8).reverse()
+    .map(e=>`<li>⚠ stress flagged at <b>${fmtT(e.t)}</b> · level ${Math.round(e.lvl*100)}%</li>`).join("");
+}
+
+function connect(){
+  const proto=location.protocol==="https:"?"wss":"ws";
+  ws=new WebSocket(`${proto}://${location.host}/ws`);
+  ws.onopen=()=>$("dot").classList.add("on");
+  ws.onclose=()=>{$("dot").classList.remove("on"); setTimeout(connect,1000);};
+  ws.onmessage=ev=>{
+    const m=JSON.parse(ev.data);
+    if(m.type==="hello"){
+      FS=m.fs; DISP=m.disp; THR=m.thr_level;
+      setText($("sub"),`subject ${m.subject} · ${m.fs} Hz · ${m.win_s}s window · re-scored every ${m.infer_s}s`);
+      setText($("thrhint"),`flag threshold: level ${Math.round(THR*100)}%`);
+      setText($("scorehint"),`threshold: ${m.threshold}`);
+      setText($("bufhint"),`window: ${m.win_s}s`);
+      $("levthr").style.left=(THR*100)+"%";
+      requestAnimationFrame(()=>{ ensureCharts(); drawLev(); });
+      return;
+    }
+    if(m.type!=="f") return;
+    ensureCharts();
+    const warming = m.buf < m.win;
+
+    // BVP waveform — updates every frame (canvas, doesn't affect text selection)
+    for(let i=0;i<m.idx.length;i++){ bvp.t.push(+(m.idx[i]/FS).toFixed(2)); bvp.y.push(m.bvp[i]); }
+    const over=bvp.t.length-DISP; if(over>0){ bvp.t.splice(0,over); bvp.y.splice(0,over); }
+    drawBvp();
+
+    // text + level history — only on change, so highlighting text isn't wiped
+    const sec=Math.floor(m.elapsed);
+    if(sec!==lastSec){
+      lastSec=sec;
+      setText($("m-el"), `${sec} s`);
+      if(warming){
+        const left=Math.ceil((m.win-m.buf)/FS);
+        $("banner").style.background="#5a6673";
+        setText($("banner"),`warming up — ${left}s left (filling 60s window)`);
+        setText($("m-level"),"—"); setText($("m-score"),"—");
+      }else{
+        setText($("m-level"), Math.round(m.level*100)+"%");
+        setText($("m-score"), m.score.toFixed(5));
+        $("levbar").style.width=(m.level*100)+"%";
+        $("levbar").style.background=m.flag?"#c0392b":"#2E86AB";
+        $("banner").style.background=m.flag?"#c0392b":"#27ae60";
+        setText($("banner"), m.flag?"⚠ STRESS FLAGGED":"✓ CALM");
+        lev.t.push(sec); lev.y.push(m.level);
+        if(lev.t.length>LEVKEEP){ lev.t.shift(); lev.y.shift(); }
+        drawLev();
+        if(m.flag && !prevFlag){ events.push({t:m.elapsed,lvl:m.level}); renderLog(); }
+        prevFlag=m.flag;
+      }
+    }
+    setText($("m-truth"), m.label);
+  };
+}
+connect();
+</script>
+</body>
+</html>

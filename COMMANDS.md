@@ -24,7 +24,44 @@ dataset download: [Borealis Data](https://borealisdata.ca/dataset.xhtml?persiste
 
 ---
 
-## 2. real-time dashboard (the main demo)
+## 2. anomaly detection (current direction)
+
+the one-class stress detector on WESAD wrist BVP. a trained model ships in
+`anomaly/saved/`, so the live dashboard runs **without** needing WESAD.
+
+### live dashboard
+
+```bash
+python3 -m anomaly.serve                 # → http://localhost:8001, then ▶ Start
+python3 -m anomaly.serve --subject S17   # other clean demo subjects: S17, S7
+```
+
+### evaluate the detectors (needs WESAD in `WESAD/`)
+
+```bash
+python3 -m anomaly.run --model baseline   # statistical floor (~0.64 PR-AUC)
+python3 -m anomaly.run --model ae         # autoencoder, O1 (~0.67)
+python3 -m anomaly.run --model ssl        # self-supervised, O2 (~0.68)
+python3 -m anomaly.wesad                  # window counts per condition
+```
+
+leave-one-subject-out; numbers also in `anomaly/RESULTS.md`. the first run reads
+~13 GB of WESAD pickles once, then caches to `WESAD/_harness_cache/`.
+
+### retrain + save the deployable model
+
+```bash
+python3 -m anomaly.export                      # → anomaly/saved/ae.keras + scorer.npz
+python3 -m anomaly.export --spec 0.90 --epochs 40
+```
+
+WESAD is ~17 GB and gitignored — download it and unzip into `WESAD/`. `ae`/`ssl`/
+`serve` use TensorFlow (a `baselines/requirements.txt` dep); for GPU install
+`tensorflow[and-cuda]`.
+
+---
+
+## 3. real-time dashboard (earlier cardiac demo)
 
 a FastAPI + WebSocket server streams to a browser UI (drawn with uPlot). it
 reuses the classifier, replay, vitals, and fall-detector code unchanged.
@@ -75,7 +112,7 @@ PORT=8001 python3 pipeline/server.py
 
 ---
 
-## 3. terminal-only pipeline (no browser)
+## 4. terminal-only pipeline (no browser)
 
 ```bash
 python3 pipeline/run_cli.py            # loops forever
@@ -85,7 +122,7 @@ python3 pipeline/run_cli.py --once     # one 92-second pass, then exit
 
 ---
 
-## 4. inference sanity check
+## 5. inference sanity check
 
 quick "the model loads and predicts" test, no streaming:
 
@@ -97,7 +134,7 @@ should print something like `Overall: 28/30 correct (93%)`.
 
 ---
 
-## 5. training and model artifacts
+## 6. training and model artifacts
 
 ### train from scratch
 
@@ -137,7 +174,7 @@ python3 baselines/make_plots.py
 
 ---
 
-## 6. git workflow
+## 7. git workflow
 
 ```bash
 git status --short          # see what changed
@@ -160,7 +197,7 @@ git reset --hard HEAD~1     # discard them too (destructive)
 
 ---
 
-## 7. troubleshooting
+## 8. troubleshooting
 
 ### `ModuleNotFoundError: No module named 'fastapi'` (or `uvicorn`)
 
@@ -218,11 +255,16 @@ it isn't anymore — the model is warmed up at startup (you'll see
 
 ---
 
-## 8. where things live
+## 9. where things live
 
 | File / folder | Purpose |
 |---|---|
-| `baselines/runs/2026-05-17_163328_phase_a/model.keras` | **the trained model** |
+| `anomaly/` | **one-class anomaly detector (current direction)** |
+| `anomaly/serve.py` + `anomaly/static/` | the live anomaly dashboard |
+| `anomaly/saved/ae.keras` | trained deployable autoencoder (3.2 MB, committed) |
+| `anomaly/RESULTS.md` | one-class detector results (PR-AUC, recall@90%) |
+| `WESAD/` | WESAD dataset (~17 GB, not in git) |
+| `baselines/runs/2026-05-17_163328_phase_a/model.keras` | the earlier supervised model |
 | `baselines/runs/2026-05-17_163328_phase_a/model_int8.tflite` | quantized model for ESP32 |
 | `baselines/inference_lib.py` | the `Classifier` API |
 | `pipeline/server.py` | the web dashboard (FastAPI + WebSocket) |

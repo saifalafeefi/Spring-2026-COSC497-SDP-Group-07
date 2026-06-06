@@ -1,19 +1,24 @@
-# pipeline — real-time PPG inference demo
+# pipeline — real-time streaming + dashboard
 
-streams PPG through the trained model in real time and shows the prediction in
-your browser.
+streams a signal through the model in real time and shows the result in your
+browser. this is the **carry-over** part of the project (the dashboard, streaming
+skeleton, and signal-quality helpers) — it's model-agnostic infrastructure.
+
+> status: today it streams the earlier supervised classifier. as the project
+> pivots to one-class anomaly detection (see the top-level README), this same
+> pipeline hosts the anomaly score + threshold flag — the dashboard work for O4.
 
 ## what it does
 
 ```
-data source → 50 Hz stream → 512-sample buffer → classifier → web UI
+data source → stream → buffer → model → web UI
    ↑
    (today: replay demo_data.csv)
-   (later: MAX30102 over USB/serial)
+   (later: real sensors — PPG + accel over the Pi)
 ```
 
 only the data source changes when real hardware arrives. everything after it
-(buffering, inference, dashboard) is already proven.
+(buffering, scoring, dashboard) stays the same.
 
 ## quick start
 

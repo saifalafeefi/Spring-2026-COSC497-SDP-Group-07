@@ -1,4 +1,9 @@
-# model performance
+# model performance (earlier supervised baseline — prior work)
+
+> note: this is the **earlier supervised, 3-class** approach. the project has
+> since pivoted to **one-class anomaly detection** on stress/exertion (see the
+> top-level README). these numbers stand as prior work / a clean-signal
+> reference point, not the current deliverable.
 
 final model results on the [UBC PPG dataset](https://borealisdata.ca/dataset.xhtml?persistentId=doi:10.5683/SP3/HF0OS9)
 (Khalili et al.). all numbers are on the held-out participant-disjoint test

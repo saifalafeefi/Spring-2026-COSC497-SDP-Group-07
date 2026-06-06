@@ -1,4 +1,4 @@
-# edge-AI powered remote health monitoring system
+# edge-AI remote health monitoring system
 
 **Khalifa University of Science and Technology** — Department of Computer Science
 **COSC497: Senior Design Project**, Spring 2026
@@ -16,88 +16,108 @@
 
 ## what it is
 
-a wearable that runs AI on-device to catch cardiac anomalies and falls in real
-time, then alerts family through a phone app. built for elderly and at-risk
-people living on their own.
+a low-cost, privacy-preserving early-warning system that runs **fully on-device**
+and flags physiological deviations for a human to review. it is *not* a
+diagnostic tool — sensitivity comes first, and a flag triggers human follow-up.
 
-the model reads 10-second PPG (pulse) windows and sorts them into three states:
-`cardiac` (normal), `non_cardiac` (sensor off-body), or `occlusion` (blood-flow
-blockage — the danger flag). it hits **92.4% accuracy** on a participant-disjoint
-split with ~112K parameters, quantized to **135 KB** for the edge.
+the contribution is **the method and the deployment, not raw signal accuracy**.
+we build a **one-class anomaly detector** — trained on abundant *normal* data, it
+flags what it hasn't seen — and test whether a detector built on clean public
+data survives on cheap, noisy hardware. the result lives in that gap.
 
-## quick links
+**target:** mental stress (primary) and exertion/recovery (complement), using
+HR, SpO₂, and accelerometer. **metric:** PR-AUC and recall @ 90% specificity, on
+subject-wise splits (pre-committed — no moving goalposts).
+
+what we are **not** doing: diagnosing disease, competing with smartwatches on
+signal quality, claiming clinical validity, or detecting "any illness." one
+target, one sensor combo, one edge deployment.
+
+## the pipeline
+
+```
+sensor → preprocess → quality check → features → anomaly model → alert
+HR·SpO₂·accel   filter·resample   artifact reject   extract/embed   autoencoder (+SSL)   dashboard flag
+```
+
+signal-quality assessment is a first-class stage, not an afterthought. the edge
+target is a **Raspberry Pi** (the guaranteed "runs on device" deliverable);
+ESP32-S3 TinyML is the stretch.
+
+## status
+
+the **one-class anomaly detector is built and evaluated** on WESAD wrist BVP: a
+statistical baseline, a 1D-conv autoencoder (O1), and a self-supervised encoder
+(O2), scored leave-one-subject-out — numbers in
+[`anomaly/RESULTS.md`](anomaly/RESULTS.md). a trained model runs live in a web
+dashboard (`anomaly/serve.py`). the earlier supervised cardiac model is kept as
+prior work; the streaming/dashboard skeleton in `pipeline/` carries over.
 
 | Document | What it covers |
 |---|---|
-| [`baselines/RESULTS.md`](baselines/RESULTS.md) | model performance metrics |
-| [`pipeline/README.md`](pipeline/README.md) | real-time pipeline + web dashboard |
+| [`anomaly/README.md`](anomaly/README.md) | one-class detector + eval harness + live dashboard |
+| [`anomaly/RESULTS.md`](anomaly/RESULTS.md) | model results (PR-AUC, recall@90%, subject-wise) |
+| [`baselines/RESULTS.md`](baselines/RESULTS.md) | earlier supervised baseline (prior work) |
+| [`pipeline/README.md`](pipeline/README.md) | original real-time streaming demo (carries over) |
 
 ## quick start
 
 ```bash
 # install dependencies (one-time)
-pip3 install -r baselines/requirements.txt
+pip3 install -r baselines/requirements.txt -r pipeline/requirements.txt
 
-# train the model (~12 min on CPU)
-python3 baselines/train.py --preset phase_a
+# live anomaly dashboard — the trained model ships in anomaly/saved/, so this
+# runs without WESAD
+python3 -m anomaly.serve          # → http://localhost:8001  (▶ Start in the page)
 
-# quantize to int8 TFLite for the device
-python3 baselines/quantize.py --preset phase_a
+# evaluate the detectors on WESAD (needs WESAD downloaded; leave-one-subject-out)
+python3 -m anomaly.run --model ae        # baseline | ae | ssl
 
-# verify the inference API end-to-end
-python3 baselines/inference_demo.py
-
-# regenerate the 3 result PNGs
-python3 baselines/make_plots.py
-
-# real-time dashboard (web UI on localhost:8000)
-pip3 install -r pipeline/requirements.txt
-python3 pipeline/server.py
-# open http://localhost:8000 — or http://<this-device-ip>:8000 from a phone
+# retrain + save the deployable model
+python3 -m anomaly.export
 ```
+
+## data
+
+- **public (develop & benchmark):** [WESAD](https://archive.ics.uci.edu/dataset/465/wesad+wearable+stress+and+affect+detection),
+  PPG-DaLiA, PhysioNet — clean signal, enough subjects for honest splits. not committed (gitignored).
+- **our own (test the transfer claim):** modest induced-proxy sessions
+  (baseline → induction → recovery), 10–15 consenting volunteers, timestamped.
+  no illness data is collected.
+- **earlier baseline:** the supervised cardiac model used the UBC PPG dataset
+  (Khalili et al.) — [download from Borealis Data](https://borealisdata.ca/dataset.xhtml?persistentId=doi:10.5683/SP3/HF0OS9)
+  (~3.8 GB), unzip into `Code & Data/`.
 
 ## repo layout
 
 ```
-Code & Data/                         UBC PPG dataset (not in git — see below)
-baselines/                           all ML code
-  train.py                           trainer
-  configs.py                         training config + presets
-  models.py / losses.py / augment.py / features.py / data.py
-  inference_lib.py                   Classifier API for runtime use
-  inference_demo.py                  end-to-end verification
-  quantize.py                        TFLite int8 conversion
-  make_plots.py                      result PNG generator
-  RESULTS.md                         performance metrics
+anomaly/                             one-class anomaly detector (current direction)
+  wesad.py                           WESAD wrist-BVP loader + windowing
+  metrics.py / splits.py             PR-AUC, recall@90%, leave-one-subject-out
+  features.py / baseline.py          statistical baseline (Mahalanobis)
+  autoencoder.py                     1D-conv autoencoder (O1)
+  ssl.py                             self-supervised contrastive encoder (O2)
+  run.py                             evaluation harness (LOSO)
+  export.py / infer.py               train+save / load the deployable model
+  serve.py + static/                 live dashboard (FastAPI + WebSocket + uPlot)
+  saved/                             trained model (ae.keras + scorer.npz)
+  RESULTS.md                         model results
+baselines/                           earlier supervised cardiac model (prior work)
+  train.py / configs.py / models.py / losses.py / augment.py
+  features.py                        engineered features (reusable)
+  data.py                            loader + subject/stratified splits
+  inference_lib.py                   Classifier API
+  quantize.py                        TFLite int8 conversion (reusable for edge)
+  RESULTS.md                         earlier supervised results (prior work)
   runs/                              trained model artifacts
-pipeline/                            real-time inference demo
-  replay.py                          50 Hz data-source simulator
-  pipeline.py                        buffer + classifier glue
+pipeline/                            real-time streaming + dashboard (carries over)
   server.py                          FastAPI + WebSocket dashboard
   static/                            browser UI (index.html + vendored uPlot)
-  run_cli.py                         terminal-only runner
-  make_demo_data.py                  build the curated demo file
-  demo_data.csv                      92 s of curated PPG (ships with repo)
-  README.md                          pipeline docs
-01_data_overview.png                 dataset overview
-02_training_progress.png             training curves
-03_model_performance.png             confusion matrix + per-class metrics
+  replay.py                          50 Hz data-source simulator
+  vitals.py                          HR / SpO₂ / signal-quality / motion helpers
+  pipeline.py / run_cli.py
+  make_demo_data.py / demo_data.csv  92 s of curated PPG (ships with repo)
+  SENSORS_SETUP.md                   Pi + sensor swap guide
+WESAD/ · Code & Data/                datasets (not in git)
 README.md                            this file
 ```
-
-## dataset (3.8 GB, not in git)
-
-the training data (UBC PPG, Khalili et al.) is too big for GitHub, so it isn't
-committed. to run the training code, download it from [Borealis Data](https://borealisdata.ca/dataset.xhtml?persistentId=doi:10.5683/SP3/HF0OS9)
-and drop it in the repo root, keeping this structure:
-
-```
-Code & Data/
-├── PPG_Raw_Processed/        512-sample LP windows per participant
-├── Classification/           original paper notebooks
-├── Statistical_Analysis/     demographics, feature CSVs
-├── Participant_P1/ ... P32/  raw per-participant PPG + ECG
-└── NonParticipant/           raw off-body recordings
-```
-
-see [`baselines/RESULTS.md`](baselines/RESULTS.md) for the dataset details used in training.

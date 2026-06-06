@@ -37,3 +37,4 @@ tensorboard/
 # --- Jupyter ---
 .ipynb_checkpoints/
 /docs
+/WESAD
