@@ -9,6 +9,8 @@ windows, flag **stress (TSST)** as the positive. evaluated **leave-one-subject-o
 - 15 subjects, ~220 calm / ~120 stress windows each
 - trained on GPU (RTX 2070 SUPER)
 
+![WESAD overview](fig1_wesad_overview.png)
+
 ## headline (mean ± std across 15 subjects)
 
 | model | PR-AUC | recall@90% spec | ROC-AUC |
@@ -16,6 +18,13 @@ windows, flag **stress (TSST)** as the positive. evaluated **leave-one-subject-o
 | baseline (Mahalanobis on features) | 0.635 ± 0.249 | 0.437 ± 0.326 | 0.723 ± 0.213 |
 | **autoencoder (O1)** | **0.667 ± 0.228** | **0.507 ± 0.328** | **0.759 ± 0.189** |
 | **SSL contrastive (O2)** | **0.676 ± 0.204** | 0.502 ± 0.286 | 0.753 ± 0.178 |
+
+![model comparison + per-subject spread](fig3_results.png)
+
+the autoencoder reconstructs calm well and stress poorly — the error gap is what
+we threshold on (overlap is why recall is moderate):
+
+![reconstruction error: calm vs stress](fig2_recon_separation.png)
 
 - **O1 met:** the autoencoder beats the statistical baseline on PR-AUC and recall.
 - **O2 met:** the self-supervised encoder has the best PR-AUC and the **smallest
@@ -45,6 +54,7 @@ transfers unevenly. it's the result to report honestly, not a bug to hide.
 python3 -m anomaly.run --model baseline   # ~0.64 PR-AUC
 python3 -m anomaly.run --model ae         # ~0.67 (O1)
 python3 -m anomaly.run --model ssl        # ~0.68 (O2)
+python3 -m anomaly.make_plots             # regenerate the figures above
 ```
 
 (windowed data is cached after the first run, so re-runs skip the 13 GB read.)

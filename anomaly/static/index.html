@@ -56,7 +56,7 @@
     <div class="metric"><div class="lbl">Anomaly level</div><div class="val" id="m-level">—</div>
       <div class="levwrap"><div class="levbar" id="levbar"></div><div class="levthr" id="levthr"></div></div>
       <div class="hint" id="thrhint">flag threshold: —</div></div>
-    <div class="metric"><div class="lbl">Recon. error</div><div class="val" id="m-score">—</div>
+    <div class="metric"><div class="lbl">Recon. error (MSE)</div><div class="val" id="m-score">—</div>
       <div class="hint" id="scorehint">threshold: —</div></div>
     <div class="metric"><div class="lbl">Ground truth (WESAD)</div><div class="val" id="m-truth">—</div>
       <div class="hint">what the subject was actually doing</div></div>
@@ -104,15 +104,19 @@ let bvpChart=null, levChart=null;
 let lastSec=-1, prevFlag=false, events=[];
 
 const AXIS={stroke:"#8b98a5",grid:{stroke:"#2c3742",width:1},ticks:{stroke:"#2c3742"}};
-function opt(el,series,h,yr){return {width:el.clientWidth||600,height:h,cursor:{show:false},legend:{show:false},
-  scales:{x:{time:false},y:yr?{range:yr}:{}},axes:[Object.assign({},AXIS),Object.assign({},AXIS)],series:[{}].concat(series)};}
+function opt(el,series,h,yr,xl,yl){return {width:el.clientWidth||600,height:h,cursor:{show:false},legend:{show:false},
+  scales:{x:{time:false},y:yr?{range:yr}:{}},
+  axes:[Object.assign({label:xl||"time (s)"},AXIS),Object.assign({label:yl||""},AXIS)],
+  series:[{}].concat(series)};}
 function ensureCharts(){
   const b=$("bvpChart"), l=$("levChart");
   if(!bvpChart && b.clientWidth>0)
-    bvpChart=new uPlot(opt(b,[{stroke:"#2E86AB",width:1.2,points:{show:false}}],240),[[0],[0]],b);
+    bvpChart=new uPlot(opt(b,[{stroke:"#2E86AB",width:1.2,points:{show:false}}],240,
+      null,"time (s)","BVP amplitude (a.u.)"),[[0],[0]],b);
   if(!levChart && l.clientWidth>0)
     levChart=new uPlot(opt(l,[{stroke:"#E07A5F",width:2,points:{show:false}},
-      {stroke:"#c0392b",width:1,dash:[6,4],points:{show:false}}],200,[0,1]),[[0],[0],[0]],l);
+      {stroke:"#c0392b",width:1,dash:[6,4],points:{show:false}}],200,[0,1],
+      "time (s)","anomaly level (0–1)"),[[0],[0],[0]],l);
 }
 function drawBvp(){ if(bvpChart) bvpChart.setData([bvp.t,bvp.y]); }
 function drawLev(){ if(levChart) levChart.setData([lev.t,lev.y,lev.t.map(()=>THR)]); }
@@ -147,7 +151,7 @@ function connect(){
       FS=m.fs; DISP=m.disp; THR=m.thr_level;
       setText($("sub"),`subject ${m.subject} · ${m.fs} Hz · ${m.win_s}s window · re-scored every ${m.infer_s}s`);
       setText($("thrhint"),`flag threshold: level ${Math.round(THR*100)}%`);
-      setText($("scorehint"),`threshold: ${m.threshold}`);
+      setText($("scorehint"),`threshold: ${m.threshold} MSE`);
       setText($("bufhint"),`window: ${m.win_s}s`);
       $("levthr").style.left=(THR*100)+"%";
       requestAnimationFrame(()=>{ ensureCharts(); drawLev(); });

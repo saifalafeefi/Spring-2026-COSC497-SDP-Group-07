@@ -18,6 +18,7 @@ built on WESAD, evaluated with sensitivity-first, subject-wise metrics.
 | `export.py` | ✅ | train one deployable autoencoder on all calm data → `saved/` |
 | `infer.py` | ✅ | load the saved model → score / level / flag one live window |
 | `serve.py` + `static/` | ✅ | **live dashboard**: model running on a WESAD BVP stream |
+| `make_plots.py` | ✅ | regenerate the result figures (`fig1/2/3_*.png`) |
 
 ## run it
 
