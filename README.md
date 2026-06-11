@@ -6,13 +6,13 @@
 
 ## team
 
-| Name | ID |
-|---|---|
-| Khaleifah Alhefeiti | 100059431 |
-| Khalfan Alantali | 100059479 |
-| Mohammed Alremeithi | 100060448 |
-| Saif Alafeefi | 100061144 |
-| Zayed Alnuami | 100061300 |
+| Name | ID | Owns |
+|---|---|---|
+| Mohamed Alremeithi | 100060448 | sensing & edge (rig, firmware, on-device deploy) |
+| Saif Alafeefi | 100061144 | ML method (anomaly detector, autoencoder, SSL) |
+| Khalfan Alantali | 100059479 | signal processing (filtering, quality, features) |
+| Zayed Alnuami | 100061300 | dashboard & integration (live viz, alerting, demo) |
+| Khaleifah Alhefeiti | 100059431 | data & evaluation (protocol, eval harness, metrics) |
 
 ## what it is
 
@@ -59,6 +59,49 @@ prior work; the streaming/dashboard skeleton in `pipeline/` carries over.
 | [`anomaly/RESULTS.md`](anomaly/RESULTS.md) | model results (PR-AUC, recall@90%, subject-wise) |
 | [`baselines/RESULTS.md`](baselines/RESULTS.md) | earlier supervised baseline (prior work) |
 | [`pipeline/README.md`](pipeline/README.md) | original real-time streaming demo (carries over) |
+
+## progress checklist
+
+tick as we go. `[x]` = done.
+
+**S1 · Mohamed — sensing & edge (O3, O7)**
+- [ ] assemble the Pi sensor rig (MAX30102 + accelerometer)
+- [ ] validate: resting HR within ±5 bpm of reference, 5-min recording, ≥3 people
+- [ ] accelerometer logging working
+- [ ] (O7, with S2) run the compressed model on the Pi — full sensor→detect→alert loop
+
+**S2 · Saif — ML method (O1, O2)**
+- [x] WESAD loader, windowing, subject-wise splits
+- [x] PR-AUC / recall@90% metrics (pre-committed)
+- [x] statistical baseline (Mahalanobis)
+- [x] autoencoder beats baseline on public data (O1)
+- [x] self-supervised encoder (O2)
+- [ ] TFLite-compress the autoencoder + report accuracy cost (→ O7)
+- [ ] per-user calibration: zero-shot vs device-calibrated delta (→ O6)
+- [ ] tunable-sensitivity control logic (→ O4, with S4)
+- [ ] (optional) exertion model on PPG-DaLiA
+
+**S3 · Khalfan — signal processing (O1)**
+- [ ] band-pass / filtering stage
+- [ ] artifact rejection
+- [ ] signal-quality index that gates windows before the model
+- [ ] wire the quality stage into the harness + dashboard
+
+**S4 · Zayed — dashboard & integration (O4)**
+- [x] live dashboard: stream → anomaly score → threshold flag → alert + event log
+- [ ] tunable sensitivity/precision slider (with S2)
+- [ ] end-to-end demo glue
+- [ ] M2 device demo
+
+**S5 · Khalifa — data & evaluation (O5, O6)**
+- [ ] IRB / consent paperwork (start first — the bottleneck)
+- [ ] collection protocol + exclusion criteria
+- [ ] collect 10–15 subjects: baseline→induction→recovery, stress + exertion, timestamped
+- [ ] (O6, with S2) evaluate induced proxies on device data; report the transfer delta
+
+**milestones**
+- [ ] M1 — method beats baseline ✅ · rig validated ❌ (half done)
+- [ ] M2 — full demo running on the device
 
 ## quick start
 
