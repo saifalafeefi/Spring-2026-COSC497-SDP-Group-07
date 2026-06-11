@@ -76,8 +76,8 @@ tick as we go. `[x]` = done.
 - [x] statistical baseline (Mahalanobis)
 - [x] autoencoder beats baseline on public data (O1)
 - [x] self-supervised encoder (O2)
-- [ ] TFLite-compress the autoencoder + report accuracy cost (→ O7)
-- [ ] per-user calibration: zero-shot vs device-calibrated delta (→ O6)
+- [x] TFLite-compress the autoencoder: 11× smaller (287 KB), PR-AUC −0.05 (→ O7 model ready)
+- [x] per-user calibration on WESAD: +0.12 PR-AUC, +0.23 recall (→ O6 method ready)
 - [ ] tunable-sensitivity control logic (→ O4, with S4)
 - [ ] (optional) exertion model on PPG-DaLiA
 
@@ -141,9 +141,12 @@ anomaly/                             one-class anomaly detector (current directi
   autoencoder.py                     1D-conv autoencoder (O1)
   ssl.py                             self-supervised contrastive encoder (O2)
   run.py                             evaluation harness (LOSO)
+  calibrate.py                       per-user calibration (O6 method)
+  compress.py                        TFLite int8 + compression cost (O7)
   export.py / infer.py               train+save / load the deployable model
   serve.py + static/                 live dashboard (FastAPI + WebSocket + uPlot)
-  saved/                             trained model (ae.keras + scorer.npz)
+  make_plots.py                      result figures (fig1–4)
+  saved/                             trained model (ae.keras + scorer.npz + *.tflite)
   RESULTS.md                         model results
 baselines/                           earlier supervised cardiac model (prior work)
   train.py / configs.py / models.py / losses.py / augment.py

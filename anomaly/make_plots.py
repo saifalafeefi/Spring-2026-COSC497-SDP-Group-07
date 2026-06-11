@@ -35,6 +35,12 @@ PR = {
 SUMMARY = {"baseline": (0.635, 0.249, 0.437, 0.326),
            "ae":       (0.667, 0.228, 0.507, 0.328),
            "ssl":      (0.676, 0.204, 0.502, 0.286)}
+
+# per-user calibration experiment (Mahalanobis, calib-frac 0.5), per-subject PR-AUC
+CAL_ZS = [0.745, 0.342, 0.402, 0.866, 0.815, 0.829, 0.506, 0.632, 0.691, 0.966,
+          0.786, 0.963, 0.777, 0.987, 0.935]
+CAL_ON = [0.918, 0.934, 0.974, 0.949, 0.923, 0.986, 0.735, 0.806, 0.566, 1.000,
+          0.731, 1.000, 0.494, 0.995, 0.993]
 NAMES = {"baseline": "baseline", "ae": "autoencoder (O1)", "ssl": "SSL (O2)"}
 COLORS = {"baseline": "#8b98a5", "ae": "#2E86AB", "ssl": "#E07A5F"}
 
@@ -115,6 +121,22 @@ def fig3_results():
     fig.tight_layout(); _save(fig, "fig3_results.png")
 
 
+def fig4_calibration():
+    zs, on = np.array(CAL_ZS), np.array(CAL_ON)
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for a, b in zip(zs, on):
+        ax.plot([0, 1], [a, b], color=("#27ae60" if b >= a else "#c0392b"),
+                alpha=.6, marker="o", ms=4)
+    ax.plot([0, 1], [zs.mean(), on.mean()], color="k", lw=3, marker="o",
+            label=f"mean {zs.mean():.2f} -> {on.mean():.2f}")
+    ax.set_xticks([0, 1]); ax.set_xticklabels(["zero-shot\n(others' calm)",
+                                               "calibrated\n(own calm)"])
+    ax.set_ylim(0, 1.02); ax.set_ylabel("PR-AUC (one line = one subject)")
+    ax.set_title("per-user calibration: green = improved, red = regressed")
+    ax.legend()
+    fig.tight_layout(); _save(fig, "fig4_calibration.png")
+
+
 def _save(fig, name):
     path = os.path.join(HERE, name)
     fig.savefig(path, dpi=120); plt.close(fig)
@@ -129,6 +151,7 @@ def main():
     fig1_overview(calm, stress, counts)
     fig2_recon(calm, stress)
     fig3_results()
+    fig4_calibration()
     print("done.")
 
 

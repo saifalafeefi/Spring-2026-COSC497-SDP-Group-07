@@ -14,6 +14,8 @@ built on WESAD, evaluated with sensitivity-first, subject-wise metrics.
 | `baseline.py` | ✅ | Mahalanobis one-class detector (the number to beat) |
 | `autoencoder.py` | ✅ | 1D-conv autoencoder, reconstruction error = anomaly score (O1) |
 | `run.py` | ✅ | LOSO harness: fit on others' normal → score held-out → metrics |
+| `calibrate.py` | ✅ | per-user calibration: zero-shot vs device-calibrated delta (O6) |
+| `compress.py` | ✅ | TFLite float/int8 conversion + compression accuracy-cost (O7) |
 | `ssl.py` | ✅ | self-supervised contrastive encoder + embedding-space scorer (O2) |
 | `export.py` | ✅ | train one deployable autoencoder on all calm data → `saved/` |
 | `infer.py` | ✅ | load the saved model → score / level / flag one live window |

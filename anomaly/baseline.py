@@ -32,14 +32,22 @@ class MahalanobisDetector:
         return (F - self.mu_) / self.sd_
 
     def fit(self, normal_windows: np.ndarray):
-        F = self._impute_standardize(extract_batch(normal_windows, self.fs), fit=True)
+        return self.fit_features(extract_batch(normal_windows, self.fs))
+
+    def score(self, windows: np.ndarray) -> np.ndarray:
+        """anomaly score per window (higher = more deviant from normal)."""
+        return self.score_features(extract_batch(windows, self.fs))
+
+    # feature-level entry points — let callers (e.g. the calibration experiment)
+    # pre-compute features once and reuse them across many fits.
+    def fit_features(self, F: np.ndarray):
+        F = self._impute_standardize(F, fit=True)
         cov = np.cov(F, rowvar=False) + self.reg * np.eye(F.shape[1])
         self.inv_cov_ = np.linalg.pinv(cov)
         self.center_ = F.mean(axis=0)
         return self
 
-    def score(self, windows: np.ndarray) -> np.ndarray:
-        """anomaly score per window (higher = more deviant from normal)."""
-        F = self._impute_standardize(extract_batch(windows, self.fs), fit=False)
+    def score_features(self, F: np.ndarray) -> np.ndarray:
+        F = self._impute_standardize(F, fit=False)
         d = F - self.center_
         return np.einsum("ij,jk,ik->i", d, self.inv_cov_, d)   # squared Mahalanobis
