@@ -267,7 +267,7 @@ it isn't anymore — the model is warmed up at startup (you'll see
 | `baselines/runs/2026-05-17_163328_phase_a/model.keras` | the earlier supervised model |
 | `baselines/runs/2026-05-17_163328_phase_a/model_int8.tflite` | quantized model for ESP32 |
 | `baselines/inference_lib.py` | the `Classifier` API |
-| `pipeline/server.py` | the web dashboard (FastAPI + WebSocket) |
+| `pipeline/server.py` | earlier cardiac dashboard (legacy; current one is `anomaly/serve.py`) |
 | `pipeline/static/` | browser UI (`index.html` + vendored uPlot) |
 | `pipeline/replay.py` | synthetic data source (demo mode) |
 | `pipeline/fall_detector.py` | 4-phase fall-detection state machine |

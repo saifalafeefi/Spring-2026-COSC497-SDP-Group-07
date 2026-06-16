@@ -53,6 +53,9 @@
   <div class="banner" id="banner">press ▶ Start</div>
 
   <div class="grid">
+    <div class="metric"><div class="lbl">Heart rate</div>
+      <div class="val" id="m-bpm">—</div>
+      <div class="hint">BPM · estimated from the pulse</div></div>
     <div class="metric"><div class="lbl">Anomaly level</div><div class="val" id="m-level">—</div>
       <div class="levwrap"><div class="levbar" id="levbar"></div><div class="levthr" id="levthr"></div></div>
       <div class="hint" id="thrhint">flag threshold: —</div></div>
@@ -67,6 +70,12 @@
   <div class="panel">
     <h2>Live wrist PPG (BVP) — last 15 s</h2>
     <div class="chart" id="bvpChart"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Heart rate over time — last 3 min</h2>
+    <div class="cap">BPM, estimated from the pulse · rises under stress</div>
+    <div class="chart" id="hrChart"></div>
   </div>
 
   <div class="panel">
@@ -99,8 +108,9 @@ function fmtT(s){ const m=Math.floor(s/60), ss=Math.floor(s%60); return `${m}:${
 let FS=64, DISP=960, THR=0.5;
 const bvp={t:[],y:[]};
 const lev={t:[],y:[]};
+const hr={t:[],y:[]};
 const LEVKEEP=180;            // ~3 min at 1 point/s
-let bvpChart=null, levChart=null;
+let bvpChart=null, levChart=null, hrChart=null;
 let lastSec=-1, prevFlag=false, events=[];
 
 const AXIS={stroke:"#8b98a5",grid:{stroke:"#2c3742",width:1},ticks:{stroke:"#2c3742"}};
@@ -109,28 +119,34 @@ function opt(el,series,h,yr,xl,yl){return {width:el.clientWidth||600,height:h,cu
   axes:[Object.assign({label:xl||"time (s)"},AXIS),Object.assign({label:yl||""},AXIS)],
   series:[{}].concat(series)};}
 function ensureCharts(){
-  const b=$("bvpChart"), l=$("levChart");
+  const b=$("bvpChart"), l=$("levChart"), h=$("hrChart");
   if(!bvpChart && b.clientWidth>0)
     bvpChart=new uPlot(opt(b,[{stroke:"#2E86AB",width:1.2,points:{show:false}}],240,
       null,"time (s)","BVP amplitude (a.u.)"),[[0],[0]],b);
+  if(!hrChart && h.clientWidth>0)
+    hrChart=new uPlot(opt(h,[{stroke:"#27ae60",width:2,points:{show:false}}],200,
+      null,"time (s)","heart rate (BPM)"),[[0],[0]],h);
   if(!levChart && l.clientWidth>0)
     levChart=new uPlot(opt(l,[{stroke:"#E07A5F",width:2,points:{show:false}},
       {stroke:"#c0392b",width:1,dash:[6,4],points:{show:false}}],200,[0,1],
       "time (s)","anomaly level (0–1)"),[[0],[0],[0]],l);
 }
 function drawBvp(){ if(bvpChart) bvpChart.setData([bvp.t,bvp.y]); }
+function drawHr(){ if(hrChart) hrChart.setData([hr.t,hr.y]); }
 function drawLev(){ if(levChart) levChart.setData([lev.t,lev.y,lev.t.map(()=>THR)]); }
 window.addEventListener("resize",()=>{ if(bvpChart)bvpChart.setSize({width:$("bvpChart").clientWidth,height:240});
-  if(levChart)levChart.setSize({width:$("levChart").clientWidth,height:200}); drawBvp(); drawLev(); });
+  if(hrChart)hrChart.setSize({width:$("hrChart").clientWidth,height:200});
+  if(levChart)levChart.setSize({width:$("levChart").clientWidth,height:200}); drawBvp(); drawHr(); drawLev(); });
 
 let ws=null;
 function send(c){ if(ws&&ws.readyState===1) ws.send(JSON.stringify({cmd:c})); }
 $("btnStart").onclick=()=>send("start");
 $("btnPause").onclick=()=>send("pause");
 $("btnReset").onclick=()=>{ send("reset");
-  for(const k in bvp)bvp[k]=[]; for(const k in lev)lev[k]=[];
+  for(const k in bvp)bvp[k]=[]; for(const k in lev)lev[k]=[]; for(const k in hr)hr[k]=[];
   lastSec=-1; prevFlag=false; events=[]; renderLog();
-  $("banner").style.background="#7f8c8d"; setText($("banner"),"reset"); drawBvp(); drawLev(); };
+  setText($("m-bpm"),"—");
+  $("banner").style.background="#7f8c8d"; setText($("banner"),"reset"); drawBvp(); drawHr(); drawLev(); };
 
 function renderLog(){
   setText($("logcount"), String(events.length));
@@ -171,6 +187,12 @@ function connect(){
     if(sec!==lastSec){
       lastSec=sec;
       setText($("m-el"), `${sec} s`);
+      setText($("m-bpm"), m.bpm ? `${m.bpm}` : "—");
+      if(m.bpm){
+        hr.t.push(sec); hr.y.push(m.bpm);
+        if(hr.t.length>LEVKEEP){ hr.t.shift(); hr.y.shift(); }
+        drawHr();
+      }
       if(warming){
         const left=Math.ceil((m.win-m.buf)/FS);
         $("banner").style.background="#5a6673";

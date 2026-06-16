@@ -48,6 +48,11 @@ level + calm/stress flag. flag threshold = 90% specificity on calm. default
 subject S5 sits low during calm and pegs the level (flagged) through the stress
 (TSST) segment; S17 and S7 are also clean demos.
 
+it also shows a human-readable **heart rate (BPM)** tile + trend line (estimated
+from the pulse via `pipeline/vitals.py`) — on S5, calm ≈ 77 BPM rises to ≈ 97 BPM
+under stress, which makes the flag legible to a non-expert. BPM is context only;
+the model still flags on the learned pulse *shape*, not on a heart-rate threshold.
+
 ## design choices
 
 - **signal:** wrist BVP @ 64 Hz only — the consumer-grade analogue of our cheap

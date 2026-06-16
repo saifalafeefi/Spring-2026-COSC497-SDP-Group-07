@@ -4,6 +4,12 @@ how to plug a real MAX30102 (PPG/SpO₂) and MPU6050 (IMU) into the pipeline onc
 the hardware arrives. the pipeline was built so this is **one new file + one
 changed line**.
 
+> note: the wiring + sensor-source steps below are reusable, but this guide
+> targets the **legacy cardiac pipeline** (`pipeline/server.py`, 3-class
+> predictions). for the current direction the same `SensorSource` feeds the
+> **anomaly** detector instead, and the check in step 6 becomes calm-vs-stress
+> (anomaly level + flag), not Cardiac/Non-Cardiac/Occlusion. O3/O7 work [S1].
+
 ## architecture
 
 today:

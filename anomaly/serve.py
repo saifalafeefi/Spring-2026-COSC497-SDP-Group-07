@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import json
 import os
+import sys
 from collections import deque
 from contextlib import asynccontextmanager
 
@@ -25,6 +26,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
 STATIC_DIR = os.path.join(HERE, "static")
 VENDOR_DIR = os.path.join(REPO_ROOT, "pipeline", "static", "vendor")  # reuse uPlot
+
+# heart-rate helper reused from the carried-over pipeline (works on any PPG @ fs)
+sys.path.insert(0, os.path.join(REPO_ROOT, "pipeline"))
+from vitals import estimate_heart_rate  # noqa: E402
 
 WIN_LEN = 60 * FS              # 60 s inference window
 DISPLAY = 15 * FS             # 15 s of BVP on the chart
@@ -59,6 +64,7 @@ class Engine:
         self.score = 0.0
         self.score_ema = None     # smoothed score — flag on sustained stress
         self.label = 0
+        self.bpm = None           # heart rate, human-readable context (not the flag)
 
     def _ingest(self):
         nidx, nbvp = [], []
@@ -77,6 +83,13 @@ class Engine:
     def _infer(self) -> float:
         return self.det.score(np.fromiter(self.infbuf, dtype=np.float32))
 
+    def _heart_rate(self) -> float | None:
+        # HR over a ~12 s tail (responsive; the full 60 s window lags too much).
+        tail = list(self.infbuf)[-12 * FS:]
+        if len(tail) < 8 * FS:
+            return None
+        return estimate_heart_rate(np.asarray(tail, dtype=np.float32), fs=FS)
+
     def frame(self, nidx, nbvp):
         return {"type": "f", "running": self.running,
                 "elapsed": round(self.total / FS, 1),
@@ -84,6 +97,7 @@ class Engine:
                 "idx": nidx, "bvp": nbvp,
                 "level": round(self.level, 3), "flag": self.flag,
                 "score": round(self.score, 5),
+                "bpm": round(self.bpm) if self.bpm else None,
                 "label": LABELS.get(self.label, "—")}
 
     async def broadcast(self, payload):
@@ -115,6 +129,7 @@ class Engine:
                     self.score = self.score_ema
                     self.level = self.det.level(self.score)
                     self.flag = self.det.flag(self.score)
+                    self.bpm = await loop.run_in_executor(None, self._heart_rate)
                 await self.broadcast(self.frame(nidx, nbvp))
                 nxt += TICK_SEC
                 d = nxt - loop.time()

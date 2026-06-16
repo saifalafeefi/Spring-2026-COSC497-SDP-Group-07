@@ -4,9 +4,10 @@ streams a signal through the model in real time and shows the result in your
 browser. this is the **carry-over** part of the project (the dashboard, streaming
 skeleton, and signal-quality helpers) — it's model-agnostic infrastructure.
 
-> status: today it streams the earlier supervised classifier. as the project
-> pivots to one-class anomaly detection (see the top-level README), this same
-> pipeline hosts the anomaly score + threshold flag — the dashboard work for O4.
+> status: this is the **earlier cardiac demo** and streams the old supervised
+> classifier. the **current live dashboard is `anomaly/serve.py`** (→
+> localhost:8001) — run `python3 -m anomaly.serve`. this `pipeline/` is kept as
+> the carried-over streaming pattern the anomaly dashboard is built on.
 
 ## what it does
 
