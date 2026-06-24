@@ -1,0 +1,1056 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{font-family:'Plus Jakarta Sans','Manrope',Inter,-apple-system,'Segoe UI',Roboto,sans-serif;color:#1B2430;background:#F6F8FB;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:none}
+input{font-family:inherit}
+::placeholder{color:#9AA6B2}
+@keyframes aura{0%,100%{transform:scale(1);opacity:.55}50%{transform:scale(1.16);opacity:.12}}
+@keyframes ringpulse{0%{transform:scale(.85);opacity:.5}100%{transform:scale(2.3);opacity:0}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes fadein{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes breathe{0%,100%{transform:scale(1);opacity:.55}50%{transform:scale(1.08);opacity:.85}}
+@keyframes fadeup{from{transform:translateY(16px)}to{transform:none}}
+@keyframes slidein{from{transform:translateX(100%)}to{transform:none}}
+</style>
+</helmet>
+<div style="min-height:100vh;background:#F6F8FB">
+
+  <!-- ============ LOGIN ============ -->
+  <sc-if value="{{ showLogin }}" hint-placeholder-val="{{ true }}">
+    <div style="min-height:100vh;display:grid;grid-template-columns:{{ loginCols }}">
+      <sc-if value="{{ isWide }}" hint-placeholder-val="{{ true }}">
+        <div style="position:relative;overflow:hidden;background:linear-gradient(155deg,#E6F7F2 0%,#EEF6FF 55%,#F6F8FB 100%);padding:56px;display:flex;flex-direction:column;justify-content:space-between">
+          <div style="position:absolute;width:520px;height:520px;border-radius:999px;border:1.5px solid rgba(45,190,158,.18);right:-180px;top:-120px"></div>
+          <div style="position:absolute;width:360px;height:360px;border-radius:999px;border:1.5px solid rgba(91,141,239,.16);right:-60px;top:40px"></div>
+          <div style="position:relative;display:flex;align-items:center;gap:12px">
+            <div style="position:relative;width:38px;height:38px;flex:none">
+              <div style="position:absolute;inset:0;border-radius:999px;background:#2DBE9E;display:flex;align-items:center;justify-content:center"><div style="width:11px;height:11px;border-radius:999px;background:#fff"></div></div>
+              <div style="position:absolute;inset:0;border-radius:999px;border:2px solid #2DBE9E;animation:{{ brandRing }}"></div>
+            </div>
+            <span style="font-weight:800;font-size:19px;letter-spacing:-.01em">{{ brandName }}</span>
+          </div>
+          <div style="position:relative">
+            <div style="font-size:13px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#2DBE9E">Edge-AI early-warning monitor</div>
+            <div style="font-size:42px;font-weight:800;line-height:1.08;margin-top:16px;max-width:13ch;color:#1B2430;letter-spacing:-.02em">Calm, transparent monitoring.</div>
+            <div style="font-size:16px;color:#6B7787;margin-top:18px;max-width:36ch;line-height:1.6">Watches physiological signals on-device and flags deviations from a person's own normal — for a human to review.</div>
+          </div>
+          <div style="position:relative;font-size:12px;color:#9AA6B2;max-width:42ch;line-height:1.6">An early-warning aid, not a diagnostic device. Everything runs locally; every flag is reviewed by a person.</div>
+        </div>
+      </sc-if>
+      <div style="display:flex;align-items:center;justify-content:center;padding:32px;background:#F6F8FB">
+        <div style="width:100%;max-width:372px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:30px">
+            <div style="position:relative;width:32px;height:32px;flex:none">
+              <div style="position:absolute;inset:0;border-radius:999px;background:#2DBE9E;display:flex;align-items:center;justify-content:center"><div style="width:9px;height:9px;border-radius:999px;background:#fff"></div></div>
+            </div>
+            <span style="font-weight:800;font-size:17px;letter-spacing:-.01em">{{ brandName }}</span>
+          </div>
+          <div style="font-size:26px;font-weight:700;letter-spacing:-.01em">Welcome back</div>
+          <div style="font-size:15px;color:#6B7787;margin-top:4px">Sign in to your monitor</div>
+          <div style="margin-top:26px;display:flex;flex-direction:column;gap:14px">
+            <label style="display:block">
+              <span style="font-size:12px;font-weight:600;color:#6B7787">Email</span>
+              <input type="email" value="caregiver@clinic.health" style="width:100%;margin-top:6px;padding:12px 14px;border:1px solid #E6EBF2;border-radius:12px;font-size:15px;background:#fff;outline:none">
+            </label>
+            <label style="display:block">
+              <span style="font-size:12px;font-weight:600;color:#6B7787">Password</span>
+              <input type="password" value="demodemo" style="width:100%;margin-top:6px;padding:12px 14px;border:1px solid #E6EBF2;border-radius:12px;font-size:15px;background:#fff;outline:none">
+            </label>
+          </div>
+          <button onClick="{{ onSignIn }}" style="width:100%;margin-top:22px;padding:14px;border-radius:12px;background:#2DBE9E;color:#fff;font-weight:700;font-size:15px;box-shadow:0 6px 16px rgba(45,190,158,.28)">Sign in</button>
+          <button onClick="{{ onDemo }}" style="width:100%;margin-top:10px;padding:14px;border-radius:12px;background:#fff;border:1px solid #E6EBF2;color:#1B2430;font-weight:600;font-size:15px">Continue to demo →</button>
+          <div style="font-size:12px;color:#9AA6B2;line-height:1.6;margin-top:26px;text-align:center">An early-warning aid, not a diagnostic device.<br>Every flag is reviewed by a person.</div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ============ APP ============ -->
+  <sc-if value="{{ showApp }}" hint-placeholder-val="{{ false }}">
+    <div style="display:flex;flex-direction:row;min-height:100vh;background:#F6F8FB">
+
+      <!-- NAV -->
+      <aside style="{{ navStyle }}">
+        <sc-if value="{{ isWide }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;align-items:center;gap:11px;padding:8px 10px 4px">
+            <div style="position:relative;width:32px;height:32px;flex:none">
+              <div style="position:absolute;inset:0;border-radius:999px;background:#2DBE9E;display:flex;align-items:center;justify-content:center"><div style="width:9px;height:9px;border-radius:999px;background:#fff"></div></div>
+              <div style="position:absolute;inset:0;border-radius:999px;border:2px solid #2DBE9E;animation:{{ brandRing }}"></div>
+            </div>
+            <span style="font-weight:800;font-size:16px;letter-spacing:-.01em">{{ brandName }}</span>
+          </div>
+        </sc-if>
+        <div style="{{ navItemsWrap }}">
+          <sc-for list="{{ navItems }}" as="item" hint-placeholder-count="4">
+            <button onClick="{{ item.onClick }}" style="{{ item.btnStyle }}">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="{{ item.iconPath }}"></path></svg>
+              <span>{{ item.label }}</span>
+            </button>
+          </sc-for>
+        </div>
+        <sc-if value="{{ isWide }}" hint-placeholder-val="{{ true }}">
+          <div style="margin-top:auto;font-size:11px;color:#9AA6B2;line-height:1.55;padding:12px 10px;border-top:1px solid #EEF2F7">An early-warning aid, not a diagnostic device. Every flag is reviewed by a person.</div>
+        </sc-if>
+      </aside>
+
+      <!-- MAIN -->
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column;min-height:100vh">
+        <!-- TOPBAR -->
+        <header style="display:flex;align-items:center;gap:14px;padding:0 24px;height:64px;background:rgba(255,255,255,.86);backdrop-filter:blur(8px);border-bottom:1px solid #E6EBF2;position:sticky;top:0;z-index:30">
+          <div style="display:flex;align-items:center;gap:11px;min-width:0">
+            <div style="width:34px;height:34px;border-radius:999px;background:#E6F7F2;color:#2DBE9E;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:none">{{ patientInitials }}</div>
+            <div style="min-width:0">
+              <div style="font-weight:700;font-size:14px;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ patientName }}</div>
+              <div style="font-size:11px;color:#9AA6B2;line-height:1.1">monitored person</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:7px;padding:6px 11px;border-radius:999px;background:{{ srcBg }};margin-left:6px">
+            <span style="width:8px;height:8px;border-radius:2px;background:{{ srcDot }};flex:none"></span>
+            <span style="font-size:12px;font-weight:600;color:{{ srcText }};white-space:nowrap">{{ sourceLabel }}</span>
+          </div>
+          <div style="flex:1"></div>
+          <div style="display:flex;align-items:center;gap:7px">
+            <span style="width:8px;height:8px;border-radius:999px;background:{{ connColor }};flex:none"></span>
+            <span style="font-size:12px;font-weight:600;color:#6B7787;white-space:nowrap">{{ connText }}</span>
+          </div>
+          <button onClick="{{ onOpenMethod }}" style="display:flex;align-items:center;gap:7px;padding:8px 13px;border-radius:10px;background:#fff;border:1px solid #E6EBF2;font-weight:600;font-size:13px;color:#1B2430">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5m0 14 5-4 4 3 7-7M4 19h16"></path></svg>
+            <span style="white-space:nowrap">Method</span>
+          </button>
+          <button onClick="{{ onLogout }}" title="Sign out" style="width:36px;height:36px;border-radius:10px;background:#fff;border:1px solid #E6EBF2;display:flex;align-items:center;justify-content:center;color:#6B7787;flex:none">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"></path></svg>
+          </button>
+        </header>
+
+        <main style="{{ mainStyle }}">
+
+          <!-- ===== MONITOR ===== -->
+          <sc-if value="{{ isMonitor }}" hint-placeholder-val="{{ true }}">
+            <div style="max-width:1200px;margin:0 auto;display:flex;flex-direction:column;gap:16px;animation:fadeup .42s cubic-bezier(.4,0,.2,1) both">
+
+              <sc-if value="{{ showCalibPrompt }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;align-items:center;gap:14px;padding:14px 18px;border-radius:16px;background:#ECF2FE;border:1px solid #DBE6FB">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#5B8DEF" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M12 2v3m0 14v3m10-10h-3M5 12H2m15.07-5.07-2.12 2.12M9.05 14.95l-2.12 2.12m0-10.14 2.12 2.12m5.9 5.9 2.12 2.12"></path></svg>
+                  <div style="flex:1;min-width:0"><div style="font-weight:700;font-size:14px">Personalize this monitor</div><div style="font-size:13px;color:#6B7787">Record 2 minutes of your calm to tune flagging to your normal.</div></div>
+                  <button onClick="{{ onOpenCalib }}" style="padding:9px 15px;border-radius:10px;background:#5B8DEF;color:#fff;font-weight:600;font-size:13px;white-space:nowrap;flex:none">Calibrate</button>
+                </div>
+              </sc-if>
+
+              <!-- row 1: hero + right -->
+              <div style="display:grid;gap:16px;grid-template-columns:{{ monGrid }};align-items:stretch">
+                <!-- HERO -->
+                <div style="position:relative;overflow:hidden;background:#fff;border:1px solid #E6EBF2;border-radius:22px;box-shadow:0 1px 2px rgba(16,24,40,.04),0 14px 34px rgba(16,24,40,.07);min-height:284px;display:flex;flex-wrap:wrap;align-items:stretch">
+                  <div style="position:absolute;inset:0;pointer-events:none;background:radial-gradient(135% 120% at 84% 36%,{{ hero.glow }},transparent 58%);animation:{{ heroBreathe }};transform-origin:80% 38%"></div>
+                  <div style="position:absolute;top:0;left:0;right:0;height:3px;background:{{ hero.color }}"></div>
+                  <div style="position:relative;flex:1 1 250px;min-width:0;padding:28px;display:flex;flex-direction:column;justify-content:center;gap:18px">
+                    <div style="font-size:11px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:#9AA6B2">Status</div>
+                    <div style="display:flex;align-items:center;gap:15px">
+                      <div style="position:relative;width:58px;height:58px;flex:none">
+                        <div style="position:absolute;inset:-6px;border-radius:20px;background:{{ hero.glow }};animation:{{ hero.aura }}"></div>
+                        <div style="position:relative;width:58px;height:58px;border-radius:18px;display:flex;align-items:center;justify-content:center;background:{{ hero.soft }};color:{{ hero.color }}">
+                          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="{{ hero.iconPath }}"></path></svg>
+                        </div>
+                      </div>
+                      <div style="font-weight:800;font-size:26px;line-height:1.12;color:{{ hero.color }};letter-spacing:-.02em;text-wrap:balance">{{ hero.word }}</div>
+                    </div>
+                    <div style="font-size:14.5px;color:#6B7787;line-height:1.5">{{ hero.sub }}</div>
+                  </div>
+                  <div style="position:relative;flex:0 0 250px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:22px 28px 24px;gap:2px">
+                    <div style="position:relative;width:204px;height:174px">
+                      <canvas ref="{{ gaugeRef }}" style="width:100%;height:100%;display:block"></canvas>
+                      <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding-top:8px">
+                        <div style="font-weight:800;font-size:42px;line-height:.92;color:{{ hero.color }};font-variant-numeric:tabular-nums;letter-spacing:-.025em">{{ gaugeCenterBig }}</div>
+                        <div style="font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#9AA6B2">{{ gaugeCenterLabel }}</div>
+                      </div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:7px;margin-top:-2px">
+                      <span style="width:10px;height:2px;background:#C0563C;display:inline-block;border-radius:2px"></span>
+                      <span style="font-size:11.5px;color:#C0563C;font-weight:600">flag threshold · {{ thrPct }}</span>
+                    </div>
+                  </div>
+                </div>
+                <!-- right column -->
+                <div style="display:flex;flex-direction:column;gap:16px">
+                  <!-- VITALS -->
+                  <div style="background:#fff;border:1px solid #E6EBF2;border-radius:20px;box-shadow:0 6px 20px rgba(16,24,40,.06);padding:20px">
+                    <div style="display:flex;justify-content:space-between;align-items:center">
+                      <span style="font-weight:600;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:#6B7787">Vitals</span>
+                      <span style="font-size:11px;color:#9AA6B2">{{ vitalsContext }}</span>
+                    </div>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:11px;margin-top:14px;opacity:{{ vitalsOpacity }};transition:opacity .3s">
+                      <div style="padding:14px 14px 12px;border-radius:16px;background:#fff;border:1px solid #EEF2F7;box-shadow:0 1px 2px rgba(16,24,40,.03)">
+                        <div style="display:flex;align-items:center;gap:6px;color:#AEB9C6"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20s-6.5-4.3-9-8C1.3 9.2 3 6 6.2 6c1.9 0 3.2 1.2 5.8 3 2.6-1.8 3.9-3 5.8-3C21 6 22.7 9.2 21 12c-2.5 3.7-9 8-9 8z"></path></svg><span style="font-size:11px;font-weight:600;color:#9AA6B2">Heart</span></div>
+                        <div style="font-size:32px;font-weight:800;color:#1B2430;font-variant-numeric:tabular-nums;line-height:1.04;margin-top:8px">{{ vit.bpm }}</div>
+                        <div style="font-size:11px;color:#9AA6B2;margin-top:1px">bpm</div>
+                      </div>
+                      <div style="padding:14px 14px 12px;border-radius:16px;background:#fff;border:1px solid #EEF2F7;box-shadow:0 1px 2px rgba(16,24,40,.03)">
+                        <div style="display:flex;align-items:center;gap:6px;color:#AEB9C6"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c3.5 4.5 5.5 7.5 5.5 10.5a5.5 5.5 0 0 1-11 0C6.5 10.5 8.5 7.5 12 3z"></path></svg><span style="font-size:11px;font-weight:600;color:#9AA6B2">SpO₂</span></div>
+                        <div style="font-size:32px;font-weight:800;color:#1B2430;font-variant-numeric:tabular-nums;line-height:1.04;margin-top:8px">{{ vit.spo2 }}</div>
+                        <div style="font-size:11px;color:#9AA6B2;margin-top:1px">%</div>
+                      </div>
+                      <div style="padding:14px 14px 12px;border-radius:16px;background:#fff;border:1px solid #EEF2F7;box-shadow:0 1px 2px rgba(16,24,40,.03)">
+                        <div style="display:flex;align-items:center;gap:6px;color:#AEB9C6"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-6 4 12 2-6h4"></path></svg><span style="font-size:11px;font-weight:600;color:#9AA6B2">Motion</span></div>
+                        <div style="font-size:25px;font-weight:800;color:#1B2430;line-height:1.04;margin-top:11px">{{ vit.motion }}</div>
+                        <div style="font-size:11px;color:#9AA6B2;margin-top:1px">{{ vit.motionHint }}</div>
+                      </div>
+                      <div style="padding:14px 14px 12px;border-radius:16px;background:{{ qChipSoft }};border:1px solid #EEF2F7">
+                        <div style="display:flex;align-items:center;gap:6px;color:#AEB9C6"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19v-3 M10 19v-7 M15 19v-11 M20 19v-5"></path></svg><span style="font-size:11px;font-weight:600;color:#9AA6B2">Signal</span></div>
+                        <div style="display:flex;align-items:center;gap:7px;margin-top:11px"><span style="width:11px;height:11px;border-radius:999px;background:{{ qChipColor }};flex:none"></span><span style="font-size:22px;font-weight:800;color:{{ qChipColor }};line-height:1">{{ qChipLabel }}</span></div>
+                        <div style="font-size:11px;color:#9AA6B2;margin-top:2px">quality</div>
+                      </div>
+                    </div>
+                    <sc-if value="{{ showPoorNudge }}" hint-placeholder-val="{{ false }}">
+                      <div style="margin-top:12px;font-size:12px;color:#6B7787;background:#EEF1F5;border-radius:10px;padding:8px 11px">Signal weak — hold still and adjust the sensor. Judgments are paused.</div>
+                    </sc-if>
+                  </div>
+                  <!-- SENSITIVITY -->
+                  <div style="background:#fff;border:1px solid #E6EBF2;border-radius:20px;box-shadow:0 6px 20px rgba(16,24,40,.06);padding:20px">
+                    <div style="display:flex;justify-content:space-between;align-items:center">
+                      <span style="font-weight:600;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:#6B7787">Sensitivity</span>
+                      <span style="font-size:12px;color:#9AA6B2;font-weight:600">{{ sens.preset }}</span>
+                    </div>
+                    <div style="display:flex;gap:5px;margin-top:13px;background:#F0F4F9;padding:4px;border-radius:12px">
+                      <button onClick="{{ sens.onCautious }}" style="flex:1;padding:9px 4px;border-radius:9px;font-weight:600;font-size:13px;color:{{ sens.cautiousColor }};background:{{ sens.cautiousBg }};box-shadow:{{ sens.cautiousShadow }};transition:all .2s">Cautious</button>
+                      <button onClick="{{ sens.onBalanced }}" style="flex:1;padding:9px 4px;border-radius:9px;font-weight:600;font-size:13px;color:{{ sens.balancedColor }};background:{{ sens.balancedBg }};box-shadow:{{ sens.balancedShadow }};transition:all .2s">Balanced</button>
+                      <button onClick="{{ sens.onStrict }}" style="flex:1;padding:9px 4px;border-radius:9px;font-weight:600;font-size:13px;color:{{ sens.strictColor }};background:{{ sens.strictBg }};box-shadow:{{ sens.strictShadow }};transition:all .2s">Strict</button>
+                    </div>
+                    <input type="range" min="0" max="1" step="0.01" value="{{ sens.value }}" onInput="{{ sens.onSlider }}" style="width:100%;margin-top:14px;accent-color:#2DBE9E">
+                    <div style="font-size:12px;color:#6B7787;line-height:1.5;margin-top:8px">{{ sens.hint }}</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- LIVE WAVEFORM -->
+              <div style="background:#fff;border:1px solid #E6EBF2;border-radius:20px;box-shadow:0 6px 20px rgba(16,24,40,.06);padding:18px 20px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                  <span style="font-weight:600;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:#6B7787">Live pulse · last 15s</span>
+                  <span style="font-size:11px;color:#9AA6B2">photoplethysmogram · a.u.</span>
+                </div>
+                <canvas ref="{{ waveRef }}" style="width:100%;height:132px;display:block"></canvas>
+              </div>
+
+              <!-- row 3: trend + events -->
+              <div style="display:grid;gap:16px;grid-template-columns:{{ twoCol }};align-items:stretch">
+                <div style="background:#fff;border:1px solid #E6EBF2;border-radius:20px;box-shadow:0 6px 20px rgba(16,24,40,.06);padding:18px 20px">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                    <span style="font-weight:600;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:#6B7787">Anomaly level · last 3 min</span>
+                    <div style="display:flex;align-items:center;gap:14px">
+                      <span style="display:flex;align-items:center;gap:5px;font-size:11px;color:#6B7787"><span style="width:14px;height:3px;border-radius:2px;background:#F2645A"></span>level</span>
+                      <span style="display:flex;align-items:center;gap:5px;font-size:11px;color:#6B7787"><span style="width:14px;height:0;border-top:2px dashed #C0563C"></span>threshold</span>
+                    </div>
+                  </div>
+                  <canvas ref="{{ trendRef }}" style="width:100%;height:158px;display:block"></canvas>
+                </div>
+                <div style="background:#fff;border:1px solid #E6EBF2;border-radius:20px;box-shadow:0 6px 20px rgba(16,24,40,.06);padding:20px;display:flex;flex-direction:column">
+                  <div style="display:flex;justify-content:space-between;align-items:center">
+                    <span style="font-weight:600;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:#6B7787">Flagged events</span>
+                    <span style="font-size:12px;font-weight:700;color:#6B7787;background:#F0F4F9;border-radius:999px;padding:2px 9px;font-variant-numeric:tabular-nums">{{ eventsCount }}</span>
+                  </div>
+                  <sc-if value="{{ hasEvents }}" hint-placeholder-val="{{ true }}">
+                    <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px">
+                      <sc-for list="{{ events }}" as="ev" hint-placeholder-count="2">
+                        <button onClick="{{ ev.onClick }}" style="display:flex;align-items:center;gap:11px;text-align:left;width:100%;padding:11px 12px;border-radius:12px;background:#FDECEA;border:1px solid #FAD9D5;transition:transform .15s ease,box-shadow .15s ease" style-hover="transform:translateY(-2px);box-shadow:0 10px 22px rgba(242,100,90,.18)">
+                          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#F2645A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M12 4l9 16H3z M12 10v4 M12 17h.01"></path></svg>
+                          <div style="flex:1;min-width:0">
+                            <div style="font-weight:600;font-size:13px;color:#1B2430">possible stress · peaked {{ ev.peak }}</div>
+                            <div style="font-size:11px;color:#9AA6B2">{{ ev.time }} · {{ ev.dur }}</div>
+                          </div>
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#C9A39E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M9 6l6 6-6 6"></path></svg>
+                        </button>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+                  <sc-if value="{{ noEvents }}" hint-placeholder-val="{{ false }}">
+                    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:24px 0;text-align:center">
+                      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#3DCB7F" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6.5L9.5 17 4 11.5"></path></svg>
+                      <div style="font-size:13px;color:#6B7787">No events — all calm so far.</div>
+                    </div>
+                  </sc-if>
+                </div>
+              </div>
+
+              <!-- TRANSPORT -->
+              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:4px 2px">
+                <button onClick="{{ onStart }}" style="display:flex;align-items:center;gap:8px;padding:11px 18px;border-radius:12px;background:{{ startBg }};color:{{ startColor }};font-weight:700;font-size:14px;box-shadow:{{ startShadow }};transition:transform .15s ease,filter .15s ease" style-hover="transform:translateY(-1px);filter:brightness(1.04)">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>Start
+                </button>
+                <button onClick="{{ onPause }}" style="display:flex;align-items:center;gap:8px;padding:11px 16px;border-radius:12px;background:#fff;border:1px solid #E6EBF2;color:#1B2430;font-weight:600;font-size:14px">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"></path></svg>Pause
+                </button>
+                <button onClick="{{ onReset }}" style="display:flex;align-items:center;gap:8px;padding:11px 16px;border-radius:12px;background:#fff;border:1px solid #E6EBF2;color:#1B2430;font-weight:600;font-size:14px">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8m0-4v4h4"></path></svg>Reset
+                </button>
+                <div style="flex:1"></div>
+                <sc-if value="{{ showDemoChip }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;align-items:center;gap:8px;padding:8px 13px;border-radius:999px;background:#F4F0FB;border:1px solid #E6DCF6">
+                    <span style="font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#8B6FC7">Demo data</span>
+                    <span style="width:1px;height:13px;background:#D8C9EF"></span>
+                    <span style="font-size:12px;color:#6B5B8A">ground truth: <b style="color:#5B3F94">{{ demoLabel }}</b></span>
+                  </div>
+                </sc-if>
+                <button onClick="{{ onOpenCalib }}" style="display:flex;align-items:center;gap:8px;padding:11px 16px;border-radius:12px;background:#ECF2FE;color:#3D6FD0;font-weight:600;font-size:14px">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v3m0 14v3m10-10h-3M5 12H2"></path></svg>Calibrate
+                </button>
+              </div>
+
+              <div style="text-align:center;font-size:12px;color:#9AA6B2;padding:6px 0 8px">An early-warning aid, not a diagnostic device. Every flag is reviewed by a person.</div>
+            </div>
+          </sc-if>
+
+          <!-- ===== PATIENTS (stub) ===== -->
+          <sc-if value="{{ isPatients }}" hint-placeholder-val="{{ false }}">
+            <div style="max-width:1200px;margin:0 auto;display:flex;flex-direction:column;gap:18px;animation:fadeup .42s cubic-bezier(.4,0,.2,1) both">
+              <div style="display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap">
+                <div>
+                  <div style="font-size:24px;font-weight:800;letter-spacing:-.01em">Patients</div>
+                  <div style="font-size:13px;color:#6B7787;margin-top:3px">{{ patientsCount }} monitored · {{ flaggedCount }} need a glance</div>
+                </div>
+                <div style="flex:1"></div>
+                <span style="display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;background:#FFF7E8;border:1px solid #F6E6C0;font-size:11px;font-weight:700;letter-spacing:.03em;color:#B8862A"><span style="width:7px;height:7px;border-radius:999px;background:#F4B740"></span>VISION · MOCK DATA</span>
+              </div>
+              <div style="display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(248px,1fr))">
+                <sc-for list="{{ patientsVM }}" as="p" hint-placeholder-count="4">
+                  <button onClick="{{ p.onClick }}" style="text-align:left;background:#fff;border:1px solid #E6EBF2;border-radius:18px;box-shadow:0 6px 20px rgba(16,24,40,.06);padding:18px;display:flex;flex-direction:column;gap:15px;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease" style-hover="transform:translateY(-3px);box-shadow:0 16px 34px rgba(16,24,40,.11);border-color:#D7DEE8">
+                    <div style="display:flex;align-items:center;gap:11px">
+                      <div style="width:40px;height:40px;border-radius:999px;background:#F0F4F9;color:#6B7787;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex:none">{{ p.initials }}</div>
+                      <div style="min-width:0;flex:1">
+                        <div style="font-weight:700;font-size:15px;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ p.name }}</div>
+                        <div style="font-size:12px;color:#9AA6B2">monitored person</div>
+                      </div>
+                      <span style="width:9px;height:9px;border-radius:999px;background:{{ p.qColor }};flex:none" title="signal"></span>
+                    </div>
+                    <div style="display:inline-flex;align-self:flex-start;align-items:center;gap:7px;padding:5px 11px;border-radius:999px;background:{{ p.statusSoft }}">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="{{ p.statusColor }}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ p.statusIcon }}"></path></svg>
+                      <span style="font-size:12px;font-weight:700;color:{{ p.statusColor }}">{{ p.statusWord }}</span>
+                    </div>
+                    <div style="display:flex;align-items:flex-end;justify-content:space-between;border-top:1px solid #F0F4F9;padding-top:13px">
+                      <div><div style="font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1">{{ p.bpm }}</div><div style="font-size:11px;color:#9AA6B2;margin-top:2px">bpm</div></div>
+                      <div style="font-size:12px;color:#6B7787;text-align:right;max-width:60%">{{ p.last }}</div>
+                    </div>
+                  </button>
+                </sc-for>
+              </div>
+              <div style="font-size:12px;color:#9AA6B2;padding-top:4px">Roster is a product-vision view on mock data — the device streams one person today. Flagged people sort to the top.</div>
+            </div>
+          </sc-if>
+          <!-- ===== HISTORY (stub) ===== -->
+          <sc-if value="{{ isHistory }}" hint-placeholder-val="{{ false }}">
+            <div style="max-width:1100px;margin:0 auto;display:flex;flex-direction:column;gap:18px;animation:fadeup .42s cubic-bezier(.4,0,.2,1) both">
+              <div style="display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap">
+                <div>
+                  <div style="font-size:24px;font-weight:800;letter-spacing:-.01em">History</div>
+                  <div style="font-size:13px;color:#6B7787;margin-top:3px">{{ patientName }} · {{ needsCount }} events need review</div>
+                </div>
+                <div style="flex:1"></div>
+                <span style="display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;background:#FFF7E8;border:1px solid #F6E6C0;font-size:11px;font-weight:700;letter-spacing:.03em;color:#B8862A"><span style="width:7px;height:7px;border-radius:999px;background:#F4B740"></span>VISION · MOCK DATA</span>
+              </div>
+              <div style="background:#fff;border:1px solid #E6EBF2;border-radius:20px;box-shadow:0 6px 20px rgba(16,24,40,.06);padding:18px 20px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:10px">
+                  <span style="font-weight:600;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:#6B7787">Session timeline · today</span>
+                  <div style="display:flex;align-items:center;gap:14px">
+                    <span style="display:flex;align-items:center;gap:5px;font-size:11px;color:#6B7787"><span style="width:14px;height:3px;border-radius:2px;background:#F2645A"></span>anomaly level</span>
+                    <span style="display:flex;align-items:center;gap:5px;font-size:11px;color:#6B7787"><span style="width:14px;height:2px;border-radius:2px;background:rgba(91,141,239,.6)"></span>heart rate</span>
+                    <span style="display:flex;align-items:center;gap:5px;font-size:11px;color:#6B7787"><span style="width:14px;height:0;border-top:2px dashed #C0563C"></span>threshold</span>
+                  </div>
+                </div>
+                <canvas ref="{{ historyRef }}" style="width:100%;height:176px;display:block"></canvas>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:space-between">
+                <span style="font-weight:700;font-size:16px">Review queue</span>
+                <span style="font-size:12px;color:#6B7787">{{ reviewCount }} total · {{ needsCount }} need review</span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:12px">
+                <sc-for list="{{ reviewVM }}" as="ev" hint-placeholder-count="4">
+                  <div style="background:#fff;border:1px solid #E6EBF2;border-radius:16px;box-shadow:0 1px 2px rgba(16,24,40,.04);padding:16px 18px">
+                    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                      <div style="width:34px;height:34px;border-radius:10px;background:#FDECEA;display:flex;align-items:center;justify-content:center;flex:none">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#F2645A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l9 16H3z M12 10v4 M12 17h.01"></path></svg>
+                      </div>
+                      <div style="min-width:0">
+                        <div style="font-weight:700;font-size:14px">possible stress · peaked {{ ev.peak }}</div>
+                        <div style="font-size:12px;color:#9AA6B2">{{ ev.date }} {{ ev.time }} · lasted {{ ev.dur }}</div>
+                      </div>
+                      <div style="flex:1"></div>
+                      <span style="display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;background:{{ ev.statusSoft }}"><span style="width:7px;height:7px;border-radius:999px;background:{{ ev.statusColor }}"></span><span style="font-size:12px;font-weight:700;color:{{ ev.statusColor }}">{{ ev.statusLabel }}</span></span>
+                    </div>
+                    <div style="display:flex;gap:22px;margin-top:13px;padding-top:13px;border-top:1px solid #F0F4F9;flex-wrap:wrap">
+                      <div><div style="font-size:11px;color:#9AA6B2;font-weight:600">Heart</div><div style="font-size:16px;font-weight:700;font-variant-numeric:tabular-nums">{{ ev.bpm }} <span style="font-size:11px;color:#9AA6B2;font-weight:500">bpm</span></div></div>
+                      <div><div style="font-size:11px;color:#9AA6B2;font-weight:600">SpO₂</div><div style="font-size:16px;font-weight:700;font-variant-numeric:tabular-nums">{{ ev.spo2 }} <span style="font-size:11px;color:#9AA6B2;font-weight:500">%</span></div></div>
+                      <div><div style="font-size:11px;color:#9AA6B2;font-weight:600">Motion</div><div style="font-size:16px;font-weight:700;text-transform:capitalize">{{ ev.motion }}</div></div>
+                    </div>
+                    <sc-if value="{{ ev.hasNote }}" hint-placeholder-val="{{ false }}">
+                      <div style="margin-top:12px;font-size:13px;color:#475569;background:#F8FAFC;border:1px solid #EEF2F7;border-radius:10px;padding:9px 12px">“{{ ev.note }}”</div>
+                    </sc-if>
+                    <sc-if value="{{ ev.isNeeds }}" hint-placeholder-val="{{ false }}">
+                      <div style="display:flex;gap:8px;margin-top:13px;flex-wrap:wrap">
+                        <button onClick="{{ ev.onAck }}" style="display:flex;align-items:center;gap:7px;padding:8px 13px;border-radius:10px;background:#E9F9F0;color:#2BAE73;font-weight:600;font-size:13px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6.5L9.5 17 4 11.5"></path></svg>Acknowledge</button>
+                        <button onClick="{{ ev.onNot }}" style="padding:8px 13px;border-radius:10px;background:#fff;border:1px solid #E6EBF2;color:#6B7787;font-weight:600;font-size:13px">Not stress</button>
+                        <button onClick="{{ ev.onNote }}" style="padding:8px 13px;border-radius:10px;background:#fff;border:1px solid #E6EBF2;color:#6B7787;font-weight:600;font-size:13px">Add note</button>
+                      </div>
+                    </sc-if>
+                    <sc-if value="{{ ev.noteOpen }}" hint-placeholder-val="{{ false }}">
+                      <input type="text" placeholder="Add a note and press Enter…" onKeyDown="{{ ev.onSaveNote }}" style="width:100%;margin-top:11px;padding:10px 13px;border:1px solid #DBE6FB;border-radius:10px;font-size:14px;background:#fff;outline:none">
+                    </sc-if>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="font-size:12px;color:#9AA6B2;padding-top:2px">Reviewing a flag never deletes it — it records a person's judgement. An early-warning aid, not a diagnostic device.</div>
+            </div>
+          </sc-if>
+          <!-- ===== SETTINGS (stub) ===== -->
+          <sc-if value="{{ isSettings }}" hint-placeholder-val="{{ false }}">
+            <div style="max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:18px;animation:fadeup .42s cubic-bezier(.4,0,.2,1) both">
+              <div>
+                <div style="font-size:24px;font-weight:800;letter-spacing:-.01em">Settings</div>
+                <div style="font-size:13px;color:#6B7787;margin-top:3px">Defaults, device &amp; the method behind the monitor</div>
+              </div>
+
+              <div style="background:#fff;border:1px solid #E6EBF2;border-radius:20px;box-shadow:0 6px 20px rgba(16,24,40,.06);padding:22px">
+                <div style="font-weight:700;font-size:15px">Default sensitivity</div>
+                <div style="font-size:13px;color:#6B7787;margin-top:3px">The operating point new sessions start at. More sensitive catches more changes but raises more false alarms — you review every flag.</div>
+                <div style="display:flex;gap:5px;margin-top:16px;background:#F0F4F9;padding:4px;border-radius:12px;max-width:420px">
+                  <button onClick="{{ sens.onCautious }}" style="flex:1;padding:9px 4px;border-radius:9px;font-weight:600;font-size:13px;color:{{ sens.cautiousColor }};background:{{ sens.cautiousBg }};box-shadow:{{ sens.cautiousShadow }}">Cautious</button>
+                  <button onClick="{{ sens.onBalanced }}" style="flex:1;padding:9px 4px;border-radius:9px;font-weight:600;font-size:13px;color:{{ sens.balancedColor }};background:{{ sens.balancedBg }};box-shadow:{{ sens.balancedShadow }}">Balanced</button>
+                  <button onClick="{{ sens.onStrict }}" style="flex:1;padding:9px 4px;border-radius:9px;font-weight:600;font-size:13px;color:{{ sens.strictColor }};background:{{ sens.strictBg }};box-shadow:{{ sens.strictShadow }}">Strict</button>
+                </div>
+                <input type="range" min="0" max="1" step="0.01" value="{{ sens.value }}" onInput="{{ sens.onSlider }}" style="width:100%;max-width:420px;margin-top:14px;accent-color:#2DBE9E">
+                <div style="font-size:12px;color:#6B7787;margin-top:8px">{{ sens.hint }}</div>
+              </div>
+
+              <div style="background:#fff;border:1px solid #E6EBF2;border-radius:20px;box-shadow:0 6px 20px rgba(16,24,40,.06);padding:22px">
+                <div style="font-weight:700;font-size:15px">Device &amp; data source</div>
+                <div style="display:flex;align-items:center;gap:14px;margin-top:16px;padding-bottom:16px;border-bottom:1px solid #F0F4F9">
+                  <div style="flex:1;min-width:0">
+                    <div style="font-weight:600;font-size:14px">Use live device</div>
+                    <div style="font-size:12px;color:#6B7787">Off = replay demo data (WESAD S5). On = connect to the sensor over WebSocket.</div>
+                  </div>
+                  <button onClick="{{ onToggleLive }}" style="position:relative;width:46px;height:26px;border-radius:999px;background:{{ liveTrack }};transition:background .2s;flex:none"><span style="position:absolute;top:3px;left:{{ liveKnob }};width:20px;height:20px;border-radius:999px;background:#fff;box-shadow:0 1px 3px rgba(16,24,40,.25);transition:left .2s"></span></button>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 0;border-bottom:1px solid #F0F4F9;flex-wrap:wrap">
+                  <div style="min-width:0"><div style="font-weight:600;font-size:14px">Device endpoint</div><div style="font-size:12px;color:#6B7787">WebSocket the Monitor connects to</div></div>
+                  <code style="font-size:12px;color:#475569;background:#F0F4F9;border-radius:8px;padding:6px 10px;font-family:ui-monospace,Menlo,monospace">{{ wsUrlDisp }}</code>
+                </div>
+                <div style="display:flex;align-items:center;gap:14px;padding:14px 0;border-bottom:1px solid #F0F4F9">
+                  <div style="flex:1;min-width:0"><div style="font-weight:600;font-size:14px">Simulate sensor disturbance</div><div style="font-size:12px;color:#6B7787">Force a poor-signal state to preview how the monitor pauses judgement.</div></div>
+                  <button onClick="{{ onTogglePoor }}" style="position:relative;width:46px;height:26px;border-radius:999px;background:{{ poorTrack }};transition:background .2s;flex:none"><span style="position:absolute;top:3px;left:{{ poorKnob }};width:20px;height:20px;border-radius:999px;background:#fff;box-shadow:0 1px 3px rgba(16,24,40,.25);transition:left .2s"></span></button>
+                </div>
+                <div style="display:flex;align-items:center;gap:14px;padding-top:16px">
+                  <div style="flex:1;min-width:0"><div style="font-weight:600;font-size:14px">Personalize to this person</div><div style="font-size:12px;color:#6B7787">Record 2 minutes of calm to tune flagging to their normal.</div></div>
+                  <button onClick="{{ onOpenCalib }}" style="padding:9px 15px;border-radius:10px;background:#ECF2FE;color:#3D6FD0;font-weight:600;font-size:13px;flex:none">Recalibrate</button>
+                </div>
+              </div>
+
+              <div style="background:#fff;border:1px solid #E6EBF2;border-radius:20px;box-shadow:0 6px 20px rgba(16,24,40,.06);padding:22px">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                  <div><div style="font-weight:700;font-size:15px">Method &amp; model card</div><div style="font-size:13px;color:#6B7787;margin-top:3px">How it works, what it catches, and its limits.</div></div>
+                  <button onClick="{{ onOpenMethod }}" style="display:flex;align-items:center;gap:7px;padding:9px 14px;border-radius:10px;background:#1B2430;color:#fff;font-weight:600;font-size:13px;flex:none"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5m0 14 5-4 4 3 7-7M4 19h16"></path></svg>Open method</button>
+                </div>
+                <div style="margin-top:16px;padding:14px 16px;border-radius:14px;background:#F8FAFC;border:1px solid #EEF2F7;font-size:13px;color:#475569;line-height:1.6">
+                  Pulse Watch learns each person's own calm baseline on-device and flags physiological deviations — primarily the body's stress response — for a human to review. It is sensitivity-first and will raise some false alarms by design. <b style="color:#1B2430">It is an early-warning aid, not a diagnostic device, and does not detect medical conditions.</b> Everything runs locally; raw signals stay on the device.
+                </div>
+              </div>
+            </div>
+          </sc-if>
+
+        </main>
+      </div>
+    </div>
+
+    <!-- METHOD slide-over (stub) -->
+    <sc-if value="{{ methodOpen }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ onCloseMethod }}" style="position:fixed;inset:0;background:rgba(16,24,40,.34);z-index:60"></div>
+      <div style="position:fixed;top:0;right:0;bottom:0;width:min(580px,96vw);background:#F6F8FB;z-index:61;box-shadow:-12px 0 40px rgba(16,24,40,.16);overflow:auto;padding:24px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+          <div>
+            <div style="font-weight:800;font-size:20px;letter-spacing:-.01em">Method &amp; metrics</div>
+            <div style="font-size:13px;color:#6B7787;margin-top:3px;max-width:42ch">Detects deviations from a person's own calm baseline. The contribution is the method &amp; on-device deployment — not beating a smartwatch on raw accuracy.</div>
+          </div>
+          <button onClick="{{ onCloseMethod }}" style="width:34px;height:34px;border-radius:10px;background:#fff;border:1px solid #E6EBF2;color:#6B7787;font-size:15px;flex:none">✕</button>
+        </div>
+        <div style="display:inline-flex;align-items:center;gap:6px;margin-top:14px;padding:5px 11px;border-radius:999px;background:#FFF7E8;border:1px solid #F6E6C0;font-size:11px;font-weight:700;letter-spacing:.03em;color:#B8862A"><span style="width:7px;height:7px;border-radius:999px;background:#F4B740"></span>PLACEHOLDER METRICS · WIRE TO RESULTS.md</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px">
+          <sc-for list="{{ methodStats }}" as="s" hint-placeholder-count="4">
+            <div style="background:#fff;border:1px solid #E6EBF2;border-radius:16px;padding:16px">
+              <div style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#9AA6B2">{{ s.label }}</div>
+              <div style="font-size:30px;font-weight:800;font-variant-numeric:tabular-nums;margin-top:6px;color:#1B2430">{{ s.value }}</div>
+              <div style="font-size:12px;color:#6B7787;margin-top:2px">{{ s.sub }}</div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="background:#fff;border:1px solid #E6EBF2;border-radius:16px;padding:18px;margin-top:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+            <div style="font-weight:700;font-size:14px">Transfer: zero-shot → calibrated</div>
+            <div style="display:flex;align-items:center;gap:14px">
+              <span style="display:flex;align-items:center;gap:5px;font-size:11px;color:#6B7787"><span style="width:11px;height:11px;border-radius:3px;background:#D7DEE8"></span>zero-shot</span>
+              <span style="display:flex;align-items:center;gap:5px;font-size:11px;color:#6B7787"><span style="width:11px;height:11px;border-radius:3px;background:#2DBE9E"></span>calibrated</span>
+            </div>
+          </div>
+          <canvas ref="{{ methodRef }}" style="width:100%;height:158px;display:block;margin-top:10px"></canvas>
+          <div style="font-size:12px;color:#6B7787;margin-top:6px">PR-AUC per subject (a.u.). Personalizing to each person's own calm lifts separation substantially — the core finding.</div>
+        </div>
+        <div style="background:#EEF4FF;border:1px solid #DBE6FB;border-radius:16px;padding:16px;margin-top:14px;font-size:13px;color:#3A4D6B;line-height:1.6">
+          <b style="color:#1B2430">Honest about limits.</b> Trained on calm data, so it flags the unfamiliar — it cannot name a cause. It is sensitivity-first and raises some false alarms by design. An early-warning aid, not a diagnostic device; every flag is reviewed by a person.
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- CALIBRATION modal (stub) -->
+    <sc-if value="{{ calibOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="position:fixed;inset:0;background:rgba(16,24,40,.42);z-index:70;display:flex;align-items:center;justify-content:center;padding:20px">
+        <div style="background:#fff;border-radius:24px;width:min(456px,96vw);padding:26px;box-shadow:0 24px 70px rgba(16,24,40,.26)">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div style="display:flex;align-items:center;gap:9px"><span style="font-weight:800;font-size:18px">Personalize monitor</span></div>
+            <button onClick="{{ onCloseCalib }}" style="width:32px;height:32px;border-radius:9px;background:#F0F4F9;color:#6B7787;font-size:14px">✕</button>
+          </div>
+
+          <sc-if value="{{ calib.isPrepare }}" hint-placeholder-val="{{ true }}">
+            <div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding:18px 6px 6px">
+              <div style="width:74px;height:74px;border-radius:999px;background:#ECF2FE;display:flex;align-items:center;justify-content:center">
+                <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#5B8DEF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 8v4l2.5 1.5"></path></svg>
+              </div>
+              <div style="font-weight:700;font-size:18px;margin-top:16px">Sit still and relax</div>
+              <div style="font-size:14px;color:#6B7787;line-height:1.6;margin-top:8px;max-width:34ch">We'll record about two minutes of your calm so the monitor learns your normal. Find a comfortable position and breathe naturally.</div>
+              <button onClick="{{ calib.onStart }}" style="width:100%;margin-top:20px;padding:13px;border-radius:12px;background:#5B8DEF;color:#fff;font-weight:700;font-size:15px;box-shadow:0 6px 16px rgba(91,141,239,.26)">Start recording</button>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ calib.isRecord }}" hint-placeholder-val="{{ false }}">
+            <div style="padding-top:16px">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <div style="font-weight:700;font-size:16px">Capturing your calm…</div>
+                <span style="display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;background:{{ calib.qSoft }}"><span style="width:8px;height:8px;border-radius:999px;background:{{ calib.qColor }}"></span><span style="font-size:12px;font-weight:700;color:{{ calib.qColor }}">Signal {{ calib.qLabel }}</span></span>
+              </div>
+              <canvas ref="{{ calibRef }}" style="width:100%;height:96px;display:block;margin-top:14px"></canvas>
+              <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:14px"><span style="font-size:12px;color:#6B7787;font-weight:600">Calm captured</span><span style="font-size:13px;font-weight:700;font-variant-numeric:tabular-nums">{{ calib.pct }}%</span></div>
+              <div style="height:10px;background:#F0F4F9;border-radius:8px;overflow:hidden;margin-top:7px"><div style="height:100%;width:{{ calib.pctCss }};background:#5B8DEF;border-radius:8px"></div></div>
+              <sc-if value="{{ calib.notQOk }}" hint-placeholder-val="{{ false }}">
+                <div style="margin-top:12px;font-size:13px;color:#8A6D2A;background:#FEF6E6;border:1px solid #F6E6C0;border-radius:10px;padding:9px 12px">Signal weak — hold still and adjust the sensor. We've paused the count.</div>
+              </sc-if>
+              <div style="display:flex;gap:10px;margin-top:18px">
+                <button onClick="{{ calib.onCancel }}" style="flex:none;padding:12px 16px;border-radius:12px;background:#fff;border:1px solid #E6EBF2;color:#6B7787;font-weight:600;font-size:14px">Cancel</button>
+                <button onClick="{{ calib.onCommit }}" style="flex:1;padding:12px;border-radius:12px;background:{{ calib.commitBg }};color:{{ calib.commitColor }};font-weight:700;font-size:14px;transition:all .2s">Personalize ✓</button>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ calib.isDone }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding:18px 6px 6px">
+              <div style="width:74px;height:74px;border-radius:999px;background:#E9F9F0;display:flex;align-items:center;justify-content:center">
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#2BAE73" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6.5L9.5 17 4 11.5"></path></svg>
+              </div>
+              <div style="font-weight:700;font-size:18px;margin-top:16px">Calibrated — tuned to your normal</div>
+              <div style="font-size:14px;color:#6B7787;line-height:1.6;margin-top:8px;max-width:32ch">The monitor moved from a generic baseline to one built on your own calm.</div>
+              <div style="display:flex;gap:12px;width:100%;margin-top:18px">
+                <div style="flex:1;background:#F8FAFC;border:1px solid #EEF2F7;border-radius:14px;padding:14px"><div style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#9AA6B2">Before</div><div style="font-size:14px;color:#6B7787;margin-top:4px">zero-shot</div><div style="height:8px;background:#E6EBF2;border-radius:6px;margin-top:9px;overflow:hidden"><div style="width:61%;height:100%;background:#C3CCD8;border-radius:6px"></div></div></div>
+                <div style="flex:1;background:#E9F9F0;border:1px solid #CDEFDD;border-radius:14px;padding:14px"><div style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#2BAE73">After</div><div style="font-size:14px;color:#2BAE73;margin-top:4px">personalized</div><div style="height:8px;background:#CDEFDD;border-radius:6px;margin-top:9px;overflow:hidden"><div style="width:88%;height:100%;background:#2DBE9E;border-radius:6px"></div></div></div>
+              </div>
+              <button onClick="{{ calib.onDone }}" style="width:100%;margin-top:20px;padding:13px;border-radius:12px;background:#2DBE9E;color:#fff;font-weight:700;font-size:15px;box-shadow:0 6px 16px rgba(45,190,158,.26)">Go to Monitor</button>
+            </div>
+          </sc-if>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- TOAST -->
+    <sc-if value="{{ hasToast }}" hint-placeholder-val="{{ false }}">
+      <div style="position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:90;background:#1B2430;color:#fff;padding:12px 20px;border-radius:999px;font-size:13px;font-weight:500;box-shadow:0 10px 30px rgba(16,24,40,.3);animation:fadein .3s ease">{{ toast }}</div>
+    </sc-if>
+
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;appName&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;Pulse Watch&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;wsUrl&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;autoRun&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;},&quot;defaultPreset&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;Balanced&quot;,&quot;options&quot;:[&quot;Cautious&quot;,&quot;Balanced&quot;,&quot;Strict&quot;],&quot;tsType&quot;:&quot;string&quot;}}">
+class Component extends DCLogic {
+  waveRef = React.createRef();
+  trendRef = React.createRef();
+  historyRef = React.createRef();
+  methodRef = React.createRef();
+  calibRef = React.createRef();
+  gaugeRef = React.createRef();
+  _personalized = false;
+
+  METHOD = {
+    stats:[
+      {label:'PR-AUC',value:'0.78',sub:'stress vs. calm separation'},
+      {label:'Recall @ 90% specificity',value:'0.83',sub:'true events caught'},
+      {label:'Per-subject variance',value:'±0.14',sub:'PR-AUC spread across people'},
+      {label:'Transfer delta',value:'+0.21',sub:'zero-shot → calibrated PR-AUC'}
+    ],
+    subjects:[{s:'S2',zs:0.52,cal:0.79},{s:'S5',zs:0.61,cal:0.84},{s:'S8',zs:0.49,cal:0.77},{s:'S11',zs:0.58,cal:0.81},{s:'S13',zs:0.55,cal:0.83},{s:'S16',zs:0.63,cal:0.86}]
+  };
+
+  SCN = [
+    {t:0,bpm:71,spo2:98,motion:0.02,level:0.10,q:0.95},
+    {t:30,bpm:74,spo2:98,motion:0.03,level:0.18,q:0.93},
+    {t:60,bpm:82,spo2:97,motion:0.04,level:0.39,q:0.90},
+    {t:75,bpm:90,spo2:97,motion:0.03,level:0.61,q:0.88},
+    {t:95,bpm:94,spo2:96,motion:0.05,level:0.72,q:0.85},
+    {t:120,bpm:88,spo2:97,motion:0.04,level:0.55,q:0.89},
+    {t:150,bpm:79,spo2:98,motion:0.03,level:0.31,q:0.92},
+    {t:180,bpm:72,spo2:98,motion:0.02,level:0.12,q:0.95}
+  ];
+  PERIOD = 180;
+
+  state = {
+    authed:false, route:'monitor', methodOpen:false, calibOpen:false,
+    mode: (typeof window!=='undefined' && window.innerWidth<700)?'phone':((typeof window!=='undefined' && window.innerWidth<1024)?'tablet':'desktop'),
+    running:false, connected:false, useLive:false, source:'replay', deviceConnected:false,
+    subject:'S5', patientName:'Aisha N.',
+    elapsed:0, buf:0, win:3840, fs:64, winS:60,
+    level:0, flag:false, bpm:null, spo2:null, motion:0, quality:1, qualityLabel:'good', label:'calm',
+    thrLevel:0.42, sensitivity:0.5, preset:'Balanced',
+    statusState:'paused', flagTimeStr:'', events:[],
+    poorInject:false, toast:null,
+    patients:[
+      {id:'mara',name:'Mara L.',status:'flagged',bpm:96,last:'flagged 2 min ago',q:'good'},
+      {id:'tom',name:'Tom R.',status:'warming',bpm:null,last:'warming up',q:'fair'},
+      {id:'aisha',name:'Aisha N.',status:'calm',bpm:74,last:'all calm',q:'good'},
+      {id:'devon',name:'Devon K.',status:'calm',bpm:68,last:'all calm',q:'good'}
+    ],
+    reviewEvents:[
+      {id:'r1',time:'14:32',date:'Today',peak:71,dur:'2m 4s',status:'needs',bpm:94,spo2:96,motion:'still',note:''},
+      {id:'r2',time:'13:58',date:'Today',peak:58,dur:'1m 12s',status:'needs',bpm:88,spo2:97,motion:'still',note:''},
+      {id:'r3',time:'11:20',date:'Today',peak:64,dur:'48s',status:'reviewed',bpm:90,spo2:97,motion:'active',note:'After taking the stairs — expected.'},
+      {id:'r4',time:'09:05',date:'Today',peak:52,dur:'1m 30s',status:'dismissed',bpm:85,spo2:98,motion:'still',note:''}
+    ],
+    noteOpen:null
+  };
+
+  // runtime (non-render) fields
+  cur=null; wave=[]; phase=0; simClock=0; smooth=0;
+  flagSince=null; calmSince=null; curEvent=null; levelHist=[];
+  lastTs=0; lastPaint=0; lastHist=0; ws=null; reduceMotion=false;
+
+  componentDidMount(){
+    this.reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    this._onResize = ()=>{ const vw=window.innerWidth; const m = vw<700?'phone':(vw<1024?'tablet':'desktop'); if(m!==this.state.mode) this.setState({mode:m}); };
+    window.addEventListener('resize', this._onResize);
+    this._raf = requestAnimationFrame(this.frame);
+  }
+  componentWillUnmount(){ cancelAnimationFrame(this._raf); window.removeEventListener('resize',this._onResize); if(this.ws){try{this.ws.close()}catch(e){}} }
+
+  // ---------- scenario ----------
+  lerp(a,b,t){ return a+(b-a)*t; }
+  sampleScenario(tt){
+    const S=this.SCN, P=this.PERIOD; let t=((tt%P)+P)%P;
+    for(let i=0;i<S.length-1;i++){ if(t>=S[i].t && t<=S[i+1].t){ const f=(t-S[i].t)/(S[i+1].t-S[i].t); const a=S[i],b=S[i+1];
+      return { bpm:this.lerp(a.bpm,b.bpm,f), spo2:Math.round(this.lerp(a.spo2,b.spo2,f)), motion:this.lerp(a.motion,b.motion,f), level:this.lerp(a.level,b.level,f), q:this.lerp(a.q,b.q,f) }; } }
+    const l=S[S.length-1]; return {bpm:l.bpm,spo2:l.spo2,motion:l.motion,level:l.level,q:l.q};
+  }
+  pulse(ph){ const x=ph%(Math.PI*2); return Math.sin(x)*0.6 + Math.sin(2*x-0.6)*0.22 + Math.sin(3*x)*0.05; }
+
+  // ---------- main loop ----------
+  frame = (now)=>{
+    if(!this.lastTs) this.lastTs=now;
+    let dt=(now-this.lastTs)/1000; this.lastTs=now; if(dt>0.1) dt=0.1; if(dt<0) dt=0;
+    if(this.state.calibOpen){ this.stepCalib(dt); }
+    else if(this.state.running && !this.state.useLive){ this.stepSim(dt); }
+    const _bpm=this.state.bpm||0;
+    if(this.state.running && _bpm>0){ this.beatPhase=(this.beatPhase||0)+dt*(_bpm/60)*6.2832; const _bc=Math.floor(this.beatPhase/6.2832); if(this.beatMark==null){this.beatMark=_bc;} else if(_bc>this.beatMark){this.beatMark=_bc; this.beatEnv=1;} }
+    this.beatEnv=Math.max(0,(this.beatEnv||0)-dt*5);
+    this.drawWave(); this.drawTrend(); this.drawGauge();
+    if(now-this.lastPaint>140){ this.lastPaint=now; this.flushPaint(); if(this.historyRef.current) this.drawHistory(); if(this.methodRef.current) this.drawMethod(); }
+    this._raf=requestAnimationFrame(this.frame);
+  };
+
+  stepSim(dt){
+    this.simClock += dt;
+    const fs=this.state.fs, scn=this.sampleScenario(this.simClock);
+    let q = scn.q; let motion=scn.motion;
+    if(this.state.poorInject){ q=0.24; motion=0.55; }
+    const n=Math.max(1, Math.round(fs*dt));
+    const inc=(Math.PI*2)*(scn.bpm/60)/fs;
+    for(let i=0;i<n;i++){ this.phase+=inc; const noise=(Math.random()-0.5)*2*(0.06+0.5*(1-q)); this.wave.push(this.pulse(this.phase)+noise+0.04*Math.sin(this.simClock*0.4)); }
+    if(this.wave.length>960) this.wave.splice(0, this.wave.length-960);
+    const buf=Math.min(Math.round(this.simClock*fs), this.state.win);
+    const lab=( (this.simClock%this.PERIOD)>=55 && (this.simClock%this.PERIOD)<128 )?'STRESS':'calm';
+    this.cur={ level:scn.level, bpm:Math.round(scn.bpm), spo2:scn.spo2, motion:motion, q:q, buf:buf, win:this.state.win, elapsed:this.simClock, label:lab, flagProvided:false };
+  }
+
+  qualityLabel(q){ return q>=0.8?'good':(q>=0.55?'fair':'poor'); }
+
+  flushPaint(){
+    const c=this.cur; if(!c){ return; }
+    const warming = c.buf < c.win;
+    this.smooth += ((c.level||0)-this.smooth)*0.16;
+    const ql=this.qualityLabel(c.q);
+    let flag=this.state.flag;
+    if(c.flagProvided){ flag=!!c.flag; }
+    else if(ql==='poor' || warming){ flag=false; this.flagSince=null; this.calmSince=null; }
+    else {
+      if(this.smooth > this.state.thrLevel){ if(this.flagSince==null)this.flagSince=c.elapsed; this.calmSince=null; if(c.elapsed-this.flagSince>2) flag=true; }
+      else if(this.smooth < this.state.thrLevel*0.9){ if(this.calmSince==null)this.calmSince=c.elapsed; this.flagSince=null; if(c.elapsed-this.calmSince>2) flag=false; }
+    }
+    // events
+    if(flag && !this.curEvent){ this.curEvent={ start:c.elapsed, peak:this.smooth, time:this.fmt(c.elapsed) }; }
+    if(this.curEvent){ if(this.smooth>this.curEvent.peak) this.curEvent.peak=this.smooth; }
+    if(!flag && this.curEvent){
+      const ev={ id:'e'+Math.round(c.elapsed*1000), time:this.curEvent.time, peak:Math.round(this.curEvent.peak*100)+'%', dur:this.dur(c.elapsed-this.curEvent.start), peakNum:Math.round(this.curEvent.peak*100), durSec:Math.round(c.elapsed-this.curEvent.start) };
+      const list=[ev, ...this.state.events].slice(0,6); this.setState({events:list}); this.curEvent=null;
+    }
+    let flagTimeStr = this.state.flagTimeStr;
+    if(flag && this.curEvent) flagTimeStr = this.curEvent.time;
+    // status
+    let status;
+    if(this.state.useLive && !this.state.connected) status='offline';
+    else if(!this.state.running) status='paused';
+    else if(ql==='poor') status='poorSignal';
+    else if(warming) status='warming';
+    else if(flag) status='flagged';
+    else if(this.smooth > this.state.thrLevel*0.66) status='caution';
+    else status='calm';
+    // history sampling
+    if(c.elapsed - this.lastHist > 0.5 || this.lastHist===0){ this.lastHist=c.elapsed; this.levelHist.push({t:c.elapsed, level:c.level, hr:c.bpm}); if(this.levelHist.length>800) this.levelHist.shift(); }
+    this.setState({ statusState:status, flag:flag, flagTimeStr:flagTimeStr, level:this.smooth, elapsed:c.elapsed, buf:c.buf, bpm:c.bpm, spo2:c.spo2, motion:c.motion, quality:c.q, qualityLabel:ql, label:c.label });
+  }
+
+  // ---------- calibration ----------
+  calib = { progress:0, phase:'prepare', q:0.95 };
+  stepCalib(dt){
+    if(this.calib.phase!=='record') return;
+    const fs=this.state.fs; const inc=(Math.PI*2)*(70/60)/fs; const q=this.state.poorInject?0.3:0.95;
+    const n=Math.max(1,Math.round(fs*dt));
+    for(let i=0;i<n;i++){ this.phase+=inc; const noise=(Math.random()-0.5)*2*(0.05+0.5*(1-q)); this.wave.push(this.pulse(this.phase)+noise); }
+    if(this.wave.length>960) this.wave.splice(0,this.wave.length-960);
+    if(q>=0.8){ this.calib.progress=Math.min(1,this.calib.progress + dt/24); }
+    this.calib.q=q;
+    this.cur={ level:0.08, bpm:70, spo2:98, motion:0.02, q:q, buf:this.state.win, win:this.state.win, elapsed:this.simClock, label:'calm', flagProvided:true, flag:false };
+    if(this.calib.progress>=1 && this.calib.phase==='record'){ /* enable commit */ }
+    this.forceUpdate();
+  }
+
+  // ---------- live WS ----------
+  connectLive(url){
+    const u = url || this.props.wsUrl || ('ws://'+((typeof location!=='undefined'&&location.hostname)||'localhost')+':8000/ws');
+    this.setState({useLive:true});
+    let opened=false;
+    try{
+      const ws=new WebSocket(u); this.ws=ws;
+      const to=setTimeout(()=>{ if(!opened){ try{ws.close()}catch(e){} this.fallbackMock('Live device not reachable'); } }, 3000);
+      ws.onopen=()=>{ opened=true; clearTimeout(to); this.setState({connected:true,source:'device',deviceConnected:true,running:true}); ws.send(JSON.stringify({cmd:'start'})); };
+      ws.onmessage=(e)=>{ try{ this.onWsMsg(JSON.parse(e.data)); }catch(err){} };
+      ws.onerror=()=>{ if(!opened){ clearTimeout(to); this.fallbackMock('Live connection error'); } };
+      ws.onclose=()=>{ if(this.state.useLive){ this.setState({connected:false, statusState:'offline'}); } };
+    }catch(e){ this.fallbackMock('Live unavailable'); }
+  }
+  fallbackMock(msg){ this.ws=null; this.setState({useLive:false, source:'replay', deviceConnected:false, connected:true, running:true, toast:msg+' — using demo replay'}); clearTimeout(this._tT); this._tT=setTimeout(()=>this.setState({toast:null}),3600); }
+  onWsMsg(m){
+    if(m.type==='hello'){ this.setState({ fs:m.fs||64, winS:m.win_s||60, win:(m.fs||64)*(m.win_s||60), thrLevel:m.thr_level??0.42, subject:m.subject||'S5', running:!!m.running, source:m.source||'device', deviceConnected:m.device_connected!==false }); }
+    else if(m.type==='f'){
+      if(Array.isArray(m.bvp)){ for(const v of m.bvp) this.wave.push(v); if(this.wave.length>960) this.wave.splice(0,this.wave.length-960); }
+      const q = (m.quality!=null)?m.quality:0.9;
+      this.simClock=m.elapsed||this.simClock;
+      this.cur={ level:m.level??0, bpm:(m.bpm!=null?m.bpm:null), spo2:(m.spo2!=null?m.spo2:null), motion:(m.motion!=null?m.motion:0), q:q, buf:m.buf??this.state.win, win:m.win??this.state.win, elapsed:m.elapsed||0, label:m.label||'—', flagProvided:true, flag:!!m.flag };
+      if(m.running!=null && m.running!==this.state.running) this.setState({running:m.running});
+    } else if(m.type==='state'){ this.setState({running:!!m.running}); }
+  }
+
+  // ---------- canvas ----------
+  prep(cv){ const dpr=window.devicePixelRatio||1; const r=cv.getBoundingClientRect(); const w=Math.max(1,Math.round(r.width)),h=Math.max(1,Math.round(r.height)); if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){ cv.width=Math.round(w*dpr); cv.height=Math.round(h*dpr);} const ctx=cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); return {ctx,w,h}; }
+  drawWave(){ if(this.waveRef.current) this.drawWaveInto(this.waveRef.current); if(this.calibRef.current) this.drawWaveInto(this.calibRef.current); }
+  drawGauge(){
+    const cv=this.gaugeRef.current; if(!cv) return; const {ctx,w,h}=this.prep(cv); ctx.clearRect(0,0,w,h);
+    const st=this.state; const cx=w/2, cy=h*0.5+8, r=Math.min(w*0.5,h*0.62)-15;
+    const A0=Math.PI*0.75, A1=Math.PI*2.25, SW=A1-A0;
+    const warming=st.running&&st.buf<st.win;
+    const lvl=warming?0:Math.max(0,Math.min(1,st.level||0));
+    const thr=Math.max(0.001,Math.min(1,st.thrLevel));
+    const ss=st.statusState; const muted=(ss==='warming'||ss==='paused'||ss==='offline'||ss==='poorSignal');
+    const r2=lvl/thr; const col=muted?'#CBD4DF':(r2>=1?'#F2645A':(r2>=0.66?'#F4B740':'#2DBE9E'));
+    ctx.lineCap='round';
+    ctx.beginPath(); ctx.arc(cx,cy,r,A0,A1); ctx.strokeStyle='#EAEFF5'; ctx.lineWidth=13; ctx.stroke();
+    if(warming){ const p=Math.min(1,st.buf/Math.max(1,st.win)); ctx.beginPath(); ctx.arc(cx,cy,r,A0,A0+SW*p); ctx.strokeStyle='#BFD3F7'; ctx.lineWidth=13; ctx.stroke(); }
+    if(!warming && lvl>0.004){
+      const a=A0+SW*lvl;
+      ctx.save(); ctx.shadowColor=col; ctx.shadowBlur=16;
+      ctx.beginPath(); ctx.arc(cx,cy,r,A0,a); ctx.strokeStyle=col; ctx.lineWidth=13; ctx.stroke(); ctx.restore();
+      const ex=cx+Math.cos(a)*r, ey=cy+Math.sin(a)*r, be=this.beatEnv||0;
+      if(be>0.01){ ctx.save(); ctx.globalAlpha=be*0.42; ctx.beginPath(); ctx.arc(ex,ey,9+be*11,0,Math.PI*2); ctx.fillStyle=col; ctx.fill(); ctx.restore(); }
+      ctx.beginPath(); ctx.arc(ex,ey,7.5,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill();
+      ctx.beginPath(); ctx.arc(ex,ey,4.5+be*1.8,0,Math.PI*2); ctx.fillStyle=col; ctx.fill();
+    }
+    const at=A0+SW*thr, c=Math.cos(at), s=Math.sin(at);
+    ctx.beginPath(); ctx.moveTo(cx+c*(r-10),cy+s*(r-10)); ctx.lineTo(cx+c*(r+10),cy+s*(r+10)); ctx.strokeStyle='#C0563C'; ctx.lineWidth=3; ctx.stroke();
+  }
+  drawWaveInto(cv){
+    if(!cv) return; const {ctx,w,h}=this.prep(cv); ctx.clearRect(0,0,w,h);
+    const ss=this.state.statusState, calib=(cv===this.calibRef.current);
+    const rgb = calib?'45,190,158':(ss==='flagged'?'242,100,90':(ss==='caution'?'224,152,42':((ss==='paused'||ss==='offline'||ss==='poorSignal')?'174,185,198':'45,190,158')));
+    const line='rgb('+rgb+')';
+    ctx.strokeStyle='#F1F5F9'; ctx.lineWidth=1; for(let i=1;i<4;i++){ const y=Math.round(h*i/4)+.5; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+    const d=this.wave, n=d.length; if(n<2) return;
+    let mn=Infinity,mx=-Infinity; for(const v of d){ if(v<mn)mn=v; if(v>mx)mx=v; } if(mx-mn<0.01){mx=mn+1;}
+    const pad=12, ph=h-pad*2; const X=i=>(i/959)*w; const Y=v=>pad+ph-((v-mn)/(mx-mn))*ph; const s=960-n;
+    const g=ctx.createLinearGradient(0,0,0,h); g.addColorStop(0,'rgba('+rgb+',.18)'); g.addColorStop(1,'rgba('+rgb+',0)');
+    ctx.beginPath(); ctx.moveTo(X(s),Y(d[0])); for(let i=1;i<n;i++) ctx.lineTo(X(s+i),Y(d[i])); ctx.lineTo(X(959),h); ctx.lineTo(X(s),h); ctx.closePath(); ctx.fillStyle=g; ctx.fill();
+    ctx.save(); ctx.shadowColor='rgba('+rgb+',.45)'; ctx.shadowBlur=8;
+    ctx.beginPath(); ctx.moveTo(X(s),Y(d[0])); for(let i=1;i<n;i++) ctx.lineTo(X(s+i),Y(d[i]));
+    ctx.strokeStyle=line; ctx.lineWidth=2; ctx.lineJoin='round'; ctx.lineCap='round'; ctx.stroke(); ctx.restore();
+    const lx=X(959), ly=Y(d[n-1]), be=this.beatEnv||0;
+    ctx.beginPath(); ctx.arc(lx,ly,7+be*11,0,Math.PI*2); ctx.fillStyle='rgba('+rgb+','+(0.12+be*0.24).toFixed(3)+')'; ctx.fill();
+    ctx.beginPath(); ctx.arc(lx,ly,3.6+be*1.4,0,Math.PI*2); ctx.fillStyle=line; ctx.fill();
+  }
+  drawTrend(){
+    const cv=this.trendRef.current; if(!cv) return; const {ctx,w,h}=this.prep(cv); ctx.clearRect(0,0,w,h);
+    const padL=4,padR=4,padT=10,padB=16; const pw=w-padL-padR, plot=h-padT-padB;
+    const Y=v=>padT+plot-Math.max(0,Math.min(1,v))*plot;
+    const thr=this.state.thrLevel; const thrY=Y(thr);
+    // tinted over-threshold band
+    ctx.fillStyle='rgba(242,100,90,.07)'; ctx.fillRect(padL,padT,pw,thrY-padT);
+    // gridlines
+    ctx.strokeStyle='#EFF3F8'; ctx.lineWidth=1; [0,0.25,0.5,0.75,1].forEach(g=>{ const y=Math.round(Y(g))+.5; ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-padR,y); ctx.stroke(); });
+    // threshold dashed
+    ctx.save(); ctx.setLineDash([5,4]); ctx.strokeStyle='#C0563C'; ctx.lineWidth=1.4; ctx.beginPath(); ctx.moveTo(padL,thrY); ctx.lineTo(w-padR,thrY); ctx.stroke(); ctx.restore();
+    const H=this.levelHist; if(H.length>=2){
+      const nowT=H[H.length-1].t; const span=180; const X=t=>padL+Math.max(0,Math.min(1,(t-(nowT-span))/span))*pw;
+      // hr faint
+      ctx.beginPath(); let started=false; for(const p of H){ if(p.t<nowT-span) continue; const y=Y((p.hr!=null?p.hr:60)/180); const x=X(p.t); if(!started){ctx.moveTo(x,y);started=true;} else ctx.lineTo(x,y); }
+      ctx.strokeStyle='rgba(91,141,239,.40)'; ctx.lineWidth=1.4; ctx.stroke();
+      // level area + line
+      const xs=[]; const ys=[]; for(const p of H){ if(p.t<nowT-span) continue; xs.push(X(p.t)); ys.push(Y(p.level)); }
+      if(xs.length>1){ const g=ctx.createLinearGradient(0,padT,0,h); g.addColorStop(0,'rgba(242,100,90,.18)'); g.addColorStop(1,'rgba(242,100,90,0)');
+        ctx.beginPath(); ctx.moveTo(xs[0],ys[0]); for(let i=1;i<xs.length;i++) ctx.lineTo(xs[i],ys[i]); ctx.lineTo(xs[xs.length-1],h-padB); ctx.lineTo(xs[0],h-padB); ctx.closePath(); ctx.fillStyle=g; ctx.fill();
+        ctx.beginPath(); ctx.moveTo(xs[0],ys[0]); for(let i=1;i<xs.length;i++) ctx.lineTo(xs[i],ys[i]); ctx.strokeStyle='#F2645A'; ctx.lineWidth=2; ctx.lineJoin='round'; ctx.stroke();
+        // head dot
+        ctx.beginPath(); ctx.arc(xs[xs.length-1],ys[ys.length-1],3.2,0,Math.PI*2); ctx.fillStyle='#F2645A'; ctx.fill(); ctx.strokeStyle='#fff'; ctx.lineWidth=1.5; ctx.stroke();
+      }
+    }
+    ctx.fillStyle='#9AA6B2'; ctx.font='10px Plus Jakarta Sans, sans-serif'; ctx.textAlign='left'; ctx.fillText('-3 min',padL+2,h-4); ctx.textAlign='right'; ctx.fillText('now',w-padR-2,h-4);
+  }
+
+  // ---------- helpers ----------
+  fmt(s){ s=Math.max(0,Math.floor(s)); const m=Math.floor(s/60); return m+':'+String(s%60).padStart(2,'0'); }
+  fmtLong(s){ s=Math.max(0,Math.floor(s)); const m=Math.floor(s/60); return m+'m '+String(s%60).padStart(2,'0')+'s'; }
+  dur(s){ s=Math.max(0,Math.round(s)); if(s<60) return s+'s'; return Math.floor(s/60)+'m '+(s%60)+'s'; }
+
+  // ---------- actions ----------
+  go(r){ this.setState({route:r}); }
+  doLogin(){ this.setState({authed:true, route:'monitor'}); const auto=this.props.autoRun!==false; if(this.props.wsUrl){ this.connectLive(); } else if(auto){ this.setState({running:true, connected:true}); } }
+  start(){ if(this.state.useLive&&this.ws){ try{this.ws.send(JSON.stringify({cmd:'start'}))}catch(e){} } this.setState({running:true, connected:true}); }
+  pause(){ if(this.state.useLive&&this.ws){ try{this.ws.send(JSON.stringify({cmd:'pause'}))}catch(e){} } this.setState({running:false}); }
+  reset(){ this.simClock=0; this.phase=0; this.smooth=0; this.wave=[]; this.levelHist=[]; this.flagSince=this.calmSince=null; this.curEvent=null; this.lastHist=0; if(this.state.useLive&&this.ws){ try{this.ws.send(JSON.stringify({cmd:'reset'}))}catch(e){} } this.setState({events:[], elapsed:0, buf:0, level:0, flag:false, bpm:null, statusState:this.state.running?'warming':'paused'}); }
+  setSens(v,preset){ const thr=0.62-0.40*v; let p=preset; if(!p){ p = v>=0.64?'Cautious':(v<=0.37?'Strict':'Balanced'); } this.setState({sensitivity:v, preset:p, thrLevel:Math.max(0.12,Math.min(0.85,thr))}); if(this.state.useLive&&this.ws){ try{this.ws.send(JSON.stringify({cmd:'set_sensitivity',value:v}))}catch(e){} } }
+  openCalib(){ this.calib={progress:0,phase:'prepare',q:0.95}; this.setState({calibOpen:true}); }
+  closeCalib(){ this.setState({calibOpen:false}); }
+  calibStart(){ this.calib.phase='record'; this.calib.progress=0; this.forceUpdate(); }
+  calibCommit(){ this.calib.phase='done'; this._personalized=true; this.forceUpdate(); }
+  calibCancel(){ this.setState({calibOpen:false}); }
+
+  openPatient(p){ this.setState({patientName:p.name, route:'monitor'}); }
+  reviewAct(id, action){
+    const list=this.state.reviewEvents.map(e=>{ if(e.id!==id) return e;
+      if(action==='ack') return {...e,status:'reviewed'};
+      if(action==='not') return {...e,status:'dismissed'};
+      return e; });
+    this.setState({reviewEvents:list, noteOpen: action==='note'?(this.state.noteOpen===id?null:id):this.state.noteOpen});
+  }
+  saveNote(id,val){ const list=this.state.reviewEvents.map(e=> e.id===id?{...e,note:val,status:'reviewed'}:e); this.setState({reviewEvents:list, noteOpen:null}); }
+  toggleLive(){ if(this.state.useLive){ if(this.ws){try{this.ws.close()}catch(e){}} this.ws=null; this.setState({useLive:false,source:'replay',deviceConnected:false,connected:true,running:true}); } else { this.connectLive(); } }
+  togglePoor(){ this.setState({poorInject:!this.state.poorInject}); }
+
+  drawHistory(){
+    const cv=this.historyRef.current; if(!cv) return; const {ctx,w,h}=this.prep(cv); ctx.clearRect(0,0,w,h);
+    const padL=4,padR=4,padT=12,padB=20, pw=w-padL-padR, plot=h-padT-padB;
+    const Y=v=>padT+plot-Math.max(0,Math.min(1,v))*plot;
+    const evs=this.state.reviewEvents; const centers=[0.16,0.40,0.66,0.88]; const sig=0.045;
+    const lvlAt=x=>{ let v=0.09; for(let i=0;i<evs.length;i++){ const c=centers[i%centers.length]; v+=(evs[i].peak/100)*Math.exp(-((x-c)*(x-c))/(2*sig*sig)); } return Math.min(1,v); };
+    const thr=this.state.thrLevel, thrY=Y(thr);
+    ctx.fillStyle='rgba(242,100,90,.06)'; ctx.fillRect(padL,padT,pw,thrY-padT);
+    ctx.strokeStyle='#EFF3F8'; ctx.lineWidth=1; [0,0.5,1].forEach(g=>{ const y=Math.round(Y(g))+.5; ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-padR,y); ctx.stroke(); });
+    ctx.save(); ctx.setLineDash([5,4]); ctx.strokeStyle='#C0563C'; ctx.lineWidth=1.3; ctx.beginPath(); ctx.moveTo(padL,thrY); ctx.lineTo(w-padR,thrY); ctx.stroke(); ctx.restore();
+    // hr faint
+    ctx.beginPath(); for(let i=0;i<=120;i++){ const x=i/120; const px=padL+x*pw; const py=Y((62+lvlAt(x)*46)/180); if(i===0)ctx.moveTo(px,py); else ctx.lineTo(px,py); } ctx.strokeStyle='rgba(91,141,239,.38)'; ctx.lineWidth=1.4; ctx.stroke();
+    // level area+line
+    const g=ctx.createLinearGradient(0,padT,0,h); g.addColorStop(0,'rgba(242,100,90,.20)'); g.addColorStop(1,'rgba(242,100,90,0)');
+    ctx.beginPath(); ctx.moveTo(padL,h-padB); for(let i=0;i<=160;i++){ const x=i/160; ctx.lineTo(padL+x*pw,Y(lvlAt(x))); } ctx.lineTo(w-padR,h-padB); ctx.closePath(); ctx.fillStyle=g; ctx.fill();
+    ctx.beginPath(); for(let i=0;i<=160;i++){ const x=i/160; const px=padL+x*pw,py=Y(lvlAt(x)); if(i===0)ctx.moveTo(px,py); else ctx.lineTo(px,py); } ctx.strokeStyle='#F2645A'; ctx.lineWidth=2; ctx.lineJoin='round'; ctx.stroke();
+    // flag markers
+    evs.forEach((e,i)=>{ const c=centers[i%centers.length]; const px=padL+c*pw; const py=Y(e.peak/100); if(e.peak/100>thr){ ctx.beginPath(); ctx.arc(px,py,3.4,0,Math.PI*2); ctx.fillStyle='#F2645A'; ctx.fill(); ctx.strokeStyle='#fff'; ctx.lineWidth=1.5; ctx.stroke(); } });
+    ctx.fillStyle='#9AA6B2'; ctx.font='10px Plus Jakarta Sans, sans-serif'; ctx.textAlign='left'; ctx.fillText('09:00',padL+2,h-5); ctx.textAlign='center'; ctx.fillText('12:00',padL+pw*0.5,h-5); ctx.textAlign='right'; ctx.fillText('now',w-padR-2,h-5);
+  }
+  drawMethod(){
+    const cv=this.methodRef.current; if(!cv) return; const {ctx,w,h}=this.prep(cv); ctx.clearRect(0,0,w,h);
+    const padL=4,padR=4,padT=10,padB=22, pw=w-padL-padR, plot=h-padT-padB;
+    const Y=v=>padT+plot-Math.max(0,Math.min(1,v))*plot;
+    ctx.strokeStyle='#EFF3F8'; ctx.lineWidth=1; [0,0.5,1].forEach(g=>{ const y=Math.round(Y(g))+.5; ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-padR,y); ctx.stroke(); });
+    const S=this.METHOD.subjects; const n=S.length; const slot=pw/n; const bw=Math.min(16,slot*0.30);
+    S.forEach((d,i)=>{ const cx=padL+slot*(i+0.5); const x1=cx-bw-2, x2=cx+2;
+      ctx.fillStyle='#D7DEE8'; const z=plot*d.zs; ctx.beginPath(); ctx.roundRect(x1,Y(d.zs),bw,z,[3,3,0,0]); ctx.fill();
+      ctx.fillStyle='#2DBE9E'; const c=plot*d.cal; ctx.beginPath(); ctx.roundRect(x2,Y(d.cal),bw,c,[3,3,0,0]); ctx.fill();
+      ctx.fillStyle='#9AA6B2'; ctx.font='10px Plus Jakarta Sans, sans-serif'; ctx.textAlign='center'; ctx.fillText(d.s,cx,h-7);
+    });
+  }
+
+  // ---------- hero presentation ----------
+  hero(){
+    const st=this.state, ss=st.statusState;
+    const rm=this.reduceMotion;
+    const nLeft=Math.max(0,Math.ceil((st.win-st.buf)/st.fs));
+    const map={
+      offline:{word:'Disconnected',sub:'trying to reconnect…',color:'#94A3B8',soft:'#EEF1F5',glow:'rgba(148,163,184,.16)',iconPath:'M4 4l16 16 M12 3a9 9 0 0 0-9 9 M21 12a9 9 0 0 0-3.5-7.1',aura:'none'},
+      paused:{word:'Paused',sub:'press Start to resume monitoring',color:'#6B7787',soft:'#F0F4F9',glow:'rgba(107,119,135,.13)',iconPath:'M9 5v14 M15 5v14',aura:'none'},
+      poorSignal:{word:'Signal weak — hold still',sub:'adjust the sensor and stay still',color:'#7C8898',soft:'#EEF1F5',glow:'rgba(148,163,184,.16)',iconPath:'M3 12c2-4 4-4 6 0s4 4 6 0 4-4 6 0',aura:'none'},
+      warming:{word:'Warming up — '+nLeft+'s left',sub:'filling the first '+st.winS+'s window',color:'#5B8DEF',soft:'#ECF2FE',glow:'rgba(91,141,239,.17)',iconPath:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l3 2',aura:'none'},
+      flagged:{word:'Needs review — possible stress',sub:'flagged at '+(st.flagTimeStr||this.fmt(st.elapsed))+' · peaked '+Math.round(st.level*100)+'%',color:'#F2645A',soft:'#FDECEA',glow:'rgba(242,100,90,.24)',iconPath:'M12 4l9 16H3z M12 10v4 M12 17h.01',aura: rm?'none':'aura 2.6s ease-in-out infinite'},
+      caution:{word:'Slightly elevated',sub:'watching for sustained change…',color:'#E0982A',soft:'#FEF6E6',glow:'rgba(244,183,64,.20)',iconPath:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 8v5 M12 16h.01',aura:'none'},
+      calm:{word:'Calm',sub:'monitoring · '+this.fmtLong(st.elapsed),color:'#2BAE73',soft:'#E9F9F0',glow:'rgba(61,203,127,.15)',iconPath:'M20 6.5L9.5 17 4 11.5',aura:'none'}
+    };
+    return map[ss]||map.calm;
+  }
+
+  navStyle(){
+    const m=this.state.mode;
+    if(m==='phone') return 'position:fixed;left:0;right:0;bottom:0;height:62px;flex-direction:row;display:flex;align-items:stretch;gap:2px;background:rgba(255,255,255,.96);backdrop-filter:blur(8px);border-top:1px solid #E6EBF2;padding:6px 6px;z-index:40;box-shadow:0 -2px 14px rgba(16,24,40,.05)';
+    return 'width:236px;flex:none;display:flex;flex-direction:column;gap:5px;background:#fff;border-right:1px solid #E6EBF2;padding:16px 12px;position:sticky;top:0;height:100vh';
+  }
+  navBtn(active){
+    const m=this.state.mode;
+    if(m==='phone') return 'flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:11px;font-weight:600;border-radius:10px;color:'+(active?'#2BAE73':'#9AA6B2')+';background:'+(active?'#E9F9F0':'transparent');
+    return 'display:flex;align-items:center;gap:12px;justify-content:flex-start;padding:11px 12px;border-radius:12px;font-size:14px;font-weight:600;color:'+(active?'#2BAE73':'#6B7787')+';background:'+(active?'#E9F9F0':'transparent');
+  }
+
+  renderVals(){
+    const st=this.state, m=st.mode, isWide=(m!=='phone');
+    const auth=st.authed;
+    const navData=[
+      {key:'monitor',label:'Monitor',iconPath:'M3 12h4l2-6 4 12 2-6h4'},
+      {key:'patients',label:'Patients',iconPath:'M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6 M3.5 19a5.5 5.5 0 0 1 11 0 M16 5.2a3 3 0 0 1 0 5.8 M21 19a5.5 5.5 0 0 0-4-5.3'},
+      {key:'history',label:'History',iconPath:'M12 3a9 9 0 1 0 9 9 M12 3v0a9 9 0 0 0-9 9 M12 7v5l3 2 M3 5l1 4 4-1'},
+      {key:'settings',label:'Settings',iconPath:'M5 8h9 M18 8h1 M5 16h1 M10 16h9 M14 5v6 M9 13v6'}
+    ];
+    const navItems=navData.map(d=>({ key:d.key, label:d.label, iconPath:d.iconPath, onClick:()=>this.go(d.key), btnStyle:this.navBtn(st.route===d.key) }));
+
+    const hero=this.hero();
+    const lvlPct=Math.round((st.level||0)*100);
+    const thr=st.thrLevel;
+    // gauge color escalate
+    const r = thr>0?(st.level/thr):0;
+    let gColor = r>=1?'#F2645A':(r>=0.66?'#F4B740':'#2DBE9E');
+    if(st.statusState==='poorSignal'||st.statusState==='warming'||st.statusState==='paused'||st.statusState==='offline') gColor='#C3CCD8';
+
+    const poor = st.qualityLabel==='poor';
+    const ql=st.qualityLabel;
+    const qMap={good:{label:'Good',color:'#2BAE73',soft:'#E9F9F0'},fair:{label:'Fair',color:'#E0982A',soft:'#FEF6E6'},poor:{label:'Poor',color:'#7C8898',soft:'#EEF1F5'}};
+    const qc=qMap[ql]||qMap.good;
+
+    const presets={Cautious:0.78,Balanced:0.5,Strict:0.24};
+    const hintMap={Cautious:'Flags more — you may see false alarms. You review every flag.',Balanced:'A balanced middle ground between catches and false alarms.',Strict:'Flags only strong, sustained changes — may miss mild ones.'};
+    const segBg=p=> (st.preset===p?'#fff':'transparent');
+    const segShadow=p=> (st.preset===p?'0 1px 3px rgba(16,24,40,.12)':'none');
+    const segColor=p=> (st.preset===p?'#1B2430':'#8693A4');
+
+    const running=st.running, warming=st.buf<st.win;
+    const events=st.events.map(e=>({ id:e.id, time:e.time, peak:e.peak, dur:e.dur, onClick:()=>this.go('history') }));
+
+    const sourceLive = st.source==='device';
+    const sourceLabel = sourceLive?'Live device':('Replay · '+st.subject);
+    const connected = sourceLive? st.connected : true;
+
+    const stPres={
+      flagged:{word:'Flagged',color:'#F2645A',soft:'#FDECEA',icon:'M12 4l9 16H3z M12 10v4 M12 17h.01'},
+      warming:{word:'Warming up',color:'#5B8DEF',soft:'#ECF2FE',icon:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l3 2'},
+      calm:{word:'Calm',color:'#2BAE73',soft:'#E9F9F0',icon:'M20 6.5L9.5 17 4 11.5'}
+    };
+    const order={flagged:0,warming:1,calm:2};
+    const patientsVM=[...st.patients].sort((a,b)=>order[a.status]-order[b.status]).map(p=>{ const s=stPres[p.status]; return {id:p.id,name:p.name,initials:p.name.split(' ').map(x=>x[0]).join('').slice(0,2),statusWord:s.word,statusColor:s.color,statusSoft:s.soft,statusIcon:s.icon,bpm:p.bpm==null?'—':p.bpm,last:p.last,qColor:p.q==='good'?'#3DCB7F':(p.q==='fair'?'#F4B740':'#94A3B8'),isActive:p.name===st.patientName,onClick:()=>this.openPatient(p)}; });
+    const flaggedCount=st.patients.filter(p=>p.status==='flagged').length;
+
+    const revMap={needs:{label:'Needs review',color:'#E0982A',soft:'#FEF6E6'},reviewed:{label:'Reviewed',color:'#2BAE73',soft:'#E9F9F0'},dismissed:{label:'Dismissed',color:'#7C8898',soft:'#EEF1F5'}};
+    const reviewVM=st.reviewEvents.map(e=>{ const r=revMap[e.status]; return {id:e.id,time:e.time,date:e.date,peak:e.peak+'%',dur:e.dur,statusLabel:r.label,statusColor:r.color,statusSoft:r.soft,bpm:e.bpm,spo2:e.spo2,motion:e.motion,note:e.note,hasNote:!!e.note,isNeeds:e.status==='needs',noteOpen:st.noteOpen===e.id,onAck:()=>this.reviewAct(e.id,'ack'),onNot:()=>this.reviewAct(e.id,'not'),onNote:()=>this.reviewAct(e.id,'note'),onSaveNote:(ev)=>{ if(ev.key==='Enter'){ this.saveNote(e.id,ev.target.value);} }}; });
+    const needsCount=st.reviewEvents.filter(e=>e.status==='needs').length;
+
+    const cb=this.calib||{progress:0,phase:'prepare',q:0.95};
+    const cc=(cb.progress||0)>=1, cqok=(cb.q||0)>=0.8;
+    const calibVM={ phase:cb.phase, isPrepare:cb.phase==='prepare', isRecord:cb.phase==='record', isDone:cb.phase==='done',
+      pct:Math.round((cb.progress||0)*100), pctCss:Math.round((cb.progress||0)*100)+'%',
+      qOk:cqok, notQOk:!cqok, qLabel:cqok?'Good':'Weak', qColor:cqok?'#2BAE73':'#7C8898', qSoft:cqok?'#E9F9F0':'#EEF1F5',
+      canCommit:cc, commitBg:cc?'#2DBE9E':'#EAEFF4', commitColor:cc?'#fff':'#A6B0BD',
+      onStart:()=>this.calibStart(), onCommit:cc?(()=>this.calibCommit()):(()=>{}), onCancel:()=>this.calibCancel(), onDone:()=>this.closeCalib() };
+
+    return {
+      brandName: this.props.appName || 'Pulse Watch',
+      brandRing: this.reduceMotion?'none':'ringpulse 2.6s ease-out infinite',
+      showLogin: !auth, showApp: auth,
+      isWide, loginCols: isWide?'1.05fr 1fr':'1fr',
+      onSignIn:()=>this.doLogin(), onDemo:()=>this.doLogin(),
+      // shell
+      navStyle:this.navStyle(),
+      navItemsWrap: m==='phone'?'display:flex;flex:1;gap:2px':'display:flex;flex-direction:column;gap:5px;margin-top:14px',
+      navItems,
+      mainStyle: m==='phone'?'flex:1;padding:16px;padding-bottom:84px':'flex:1;padding:24px',
+      // topbar
+      patientName: st.patientName, patientInitials: st.patientName.split(' ').map(x=>x[0]).join('').slice(0,2),
+      sourceLabel, srcBg: sourceLive?'#E9F9F0':'#F0F4F9', srcDot: sourceLive?'#2BAE73':'#7C8898', srcText: sourceLive?'#2BAE73':'#6B7787',
+      connColor: connected?'#3DCB7F':'#94A3B8', connText: connected?'Connected':'Offline',
+      onOpenMethod:()=>this.setState({methodOpen:true}), onLogout:()=>this.setState({authed:false, running:false}),
+      // routes
+      isMonitor: st.route==='monitor', isPatients: st.route==='patients', isHistory: st.route==='history', isSettings: st.route==='settings',
+      monGrid: (m==='phone'||m==='tablet')?'1fr':'minmax(0,1.18fr) minmax(0,1fr)',
+      twoCol: (m==='phone')?'1fr':'minmax(0,1.25fr) minmax(0,1fr)',
+      // hero
+      hero,
+      levelPct: (warming&&running)?'—':lvlPct+'%',
+      gaugeWidth: ((warming&&running)?0:lvlPct)+'%', gaugeColor:gColor,
+      thrLeft:(thr*100)+'%', thrPct:Math.round(thr*100)+'%',
+      gaugeCenterBig: (running&&warming) ? Math.max(0,Math.ceil((st.win-st.buf)/st.fs))+'s' : (st.statusState==='paused'?'—':(st.statusState==='offline'?'—':lvlPct+'%')),
+      gaugeCenterLabel: (running&&warming) ? 'warming up' : (st.statusState==='paused'?'paused':(st.statusState==='offline'?'offline':(st.statusState==='poorSignal'?'signal weak':'of baseline'))),
+      heroBreathe: this.reduceMotion?'none':'breathe 6.5s ease-in-out infinite',
+      // vitals
+      vit:{ bpm: st.bpm==null?'—':st.bpm, spo2: st.spo2==null?'—':st.spo2, motion: st.motion<0.12?'Still':'Active', motionHint: st.motion<0.12?'at rest':'moving' },
+      vitalsContext: st.motion<0.12?'sitting still':'in motion',
+      vitalsOpacity: poor?0.4:1,
+      qChipLabel:qc.label, qChipColor:qc.color, qChipSoft:qc.soft,
+      showPoorNudge: poor,
+      // sensitivity
+      sens:{ preset:st.preset, value:st.sensitivity, hint:hintMap[st.preset]||hintMap.Balanced,
+        onCautious:()=>this.setSens(presets.Cautious,'Cautious'), onBalanced:()=>this.setSens(presets.Balanced,'Balanced'), onStrict:()=>this.setSens(presets.Strict,'Strict'),
+        onSlider:(e)=>this.setSens(parseFloat(e.target.value),null),
+        cautiousBg:segBg('Cautious'), cautiousShadow:segShadow('Cautious'), cautiousColor:segColor('Cautious'),
+        balancedBg:segBg('Balanced'), balancedShadow:segShadow('Balanced'), balancedColor:segColor('Balanced'),
+        strictBg:segBg('Strict'), strictShadow:segShadow('Strict'), strictColor:segColor('Strict') },
+      // charts
+      waveRef:this.waveRef, trendRef:this.trendRef, gaugeRef:this.gaugeRef,
+      // events
+      events, eventsCount: st.events.length, hasEvents: st.events.length>0, noEvents: st.events.length===0,
+      // transport
+      onStart:()=>this.start(), onPause:()=>this.pause(), onReset:()=>this.reset(),
+      startBg: running?'#E9F9F0':'#2DBE9E', startColor: running?'#2BAE73':'#fff', startShadow: running?'none':'0 6px 16px rgba(45,190,158,.28)',
+      showDemoChip: (st.source==='replay') && running && st.label && st.label!=='—', demoLabel: st.label,
+      onOpenCalib:()=>this.openCalib(), showCalibPrompt: st.route==='monitor' && !this._personalized,
+      // overlays
+      // patients
+      patientsVM, flaggedCount, patientsCount: st.patients.length,
+      // history
+      reviewVM, needsCount, reviewCount: st.reviewEvents.length, historyRef:this.historyRef,
+      // settings
+      useLive: st.useLive, poorInject: st.poorInject, wsUrlDisp:(this.props.wsUrl||'ws://<device-ip>:8000/ws'),
+      onToggleLive:()=>this.toggleLive(), onTogglePoor:()=>this.togglePoor(), sourceModeLabel: sourceLive?'Live device':'Replay (demo)',
+      liveTrack: st.useLive?'#2DBE9E':'#D7DEE8', liveKnob: st.useLive?'23px':'3px',
+      poorTrack: st.poorInject?'#F4B740':'#D7DEE8', poorKnob: st.poorInject?'23px':'3px',
+      // method
+      methodStats:this.METHOD.stats, methodRef:this.methodRef,
+      // calibration
+      calib:calibVM, calibRef:this.calibRef, personalized:this._personalized,
+      methodOpen: st.methodOpen, onCloseMethod:()=>this.setState({methodOpen:false}),
+      calibOpen: st.calibOpen, onCloseCalib:()=>this.closeCalib(),
+      hasToast: !!st.toast, toast: st.toast
+    };
+  }
+}
+</script>
+</body>
+</html>
