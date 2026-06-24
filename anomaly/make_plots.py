@@ -137,6 +137,25 @@ def fig4_calibration():
     fig.tight_layout(); _save(fig, "fig4_calibration.png")
 
 
+def fig5_subject_spread():
+    """horizontal per-subject PR-AUC spread (the 'range is the message' slide)."""
+    pr = np.array(PR["ae"])
+    fig, ax = plt.subplots(figsize=(10, 2.8))
+    rng = np.random.RandomState(2)
+    yj = 1 + (rng.rand(len(pr)) - .5) * 0.5
+    ax.scatter(pr, yj, s=80, color="#2E86AB", edgecolor="white", linewidth=.6, zorder=3)
+    ax.axvline(pr.mean(), color="#c0392b", ls="--", lw=1.5, zorder=2,
+               label=f"mean {pr.mean():.2f}")
+    ax.set_xlim(0.25, 1.0); ax.set_ylim(0, 2)
+    ax.set_yticks([])
+    ax.set_xlabel("per-subject PR-AUC  (one dot = one held-out subject; autoencoder)")
+    ax.set_title("transfer is uneven: PR-AUC spans ~0.30 to ~0.99 across people")
+    for s in ("top", "right", "left"):
+        ax.spines[s].set_visible(False)
+    ax.legend(loc="upper left", frameon=False)
+    fig.tight_layout(); _save(fig, "fig5_subject_spread.png")
+
+
 def _save(fig, name):
     path = os.path.join(HERE, name)
     fig.savefig(path, dpi=120); plt.close(fig)
@@ -152,6 +171,7 @@ def main():
     fig2_recon(calm, stress)
     fig3_results()
     fig4_calibration()
+    fig5_subject_spread()
     print("done.")
 
 
