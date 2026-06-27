@@ -49,9 +49,14 @@ ESP32-S3 TinyML is the stretch.
 the **one-class anomaly detector is built and evaluated** on WESAD wrist BVP: a
 statistical baseline, a 1D-conv autoencoder (O1), and a self-supervised encoder
 (O2), scored leave-one-subject-out — numbers in
-[`anomaly/RESULTS.md`](anomaly/RESULTS.md). a trained model runs live in a web
-dashboard (`anomaly/serve.py`). the earlier supervised cardiac model is kept as
-prior work; the streaming/dashboard skeleton in `pipeline/` carries over.
+[`anomaly/RESULTS.md`](anomaly/RESULTS.md). a bottleneck redesign lifts the
+autoencoder to **PR-AUC 0.706** (from 0.67), and it ships as a **4 MB int8 TFLite**
+(1.5 ms/window) that fits the **ESP32-S3-N16R8** — the dashboard and the device run
+the *same* model. it runs live in two web front-ends (`anomaly/serve.py`): the team's
+**Pulse Watch** product UI at `/` and a developer dashboard at `/dev` that scores the
+model's flag against ground truth live, both with a tunable sensitivity control. the
+earlier supervised cardiac model is kept as prior work; the streaming/dashboard
+skeleton in `pipeline/` carries over.
 
 | Document | What it covers |
 |---|---|
@@ -76,9 +81,10 @@ tick as we go. `[x]` = done.
 - [x] statistical baseline (Mahalanobis)
 - [x] autoencoder beats baseline on public data (O1)
 - [x] self-supervised encoder (O2)
-- [x] TFLite-compress the autoencoder: 11× smaller (287 KB), PR-AUC −0.05 (→ O7 model ready)
+- [x] bottleneck redesign: LOSO PR-AUC 0.67 → 0.71, tighter spread across subjects
+- [x] TFLite-compress to a 4 MB int8 model, 1.5 ms/window, fits the ESP32-S3 (→ O7 model ready)
 - [x] per-user calibration on WESAD: +0.12 PR-AUC, +0.23 recall (→ O6 method ready)
-- [ ] tunable-sensitivity control logic (→ O4, with S4)
+- [x] tunable-sensitivity control: slider + watch preset → server retunes the flag threshold (O4, with S4)
 - [ ] (optional) exertion model on PPG-DaLiA
 
 **S3 · Khalfan — signal processing (O1)**
@@ -89,7 +95,8 @@ tick as we go. `[x]` = done.
 
 **S4 · Zayed — dashboard & integration (O4)**
 - [x] live dashboard: stream → anomaly score → threshold flag → alert + event log
-- [ ] tunable sensitivity/precision slider (with S2)
+- [x] tunable sensitivity/precision slider (with S2)
+- [x] Pulse Watch product UI integrated on the live pipeline (live Patients + History)
 - [ ] end-to-end demo glue
 - [ ] M2 device demo
 
@@ -109,16 +116,17 @@ tick as we go. `[x]` = done.
 # install dependencies (one-time)
 pip3 install -r baselines/requirements.txt -r pipeline/requirements.txt
 
-# live anomaly dashboard — the trained model ships in anomaly/saved/, so this
-# runs without WESAD
-python3 -m anomaly.serve          # → http://localhost:8001  (▶ Start in the page)
+# live dashboards — the int8 model ships in anomaly/saved/, so this runs without WESAD
+python3 -m anomaly.serve          # → http://localhost:8001  ( / Pulse Watch · /dev developer )
 
 # evaluate the detectors on WESAD (needs WESAD downloaded; leave-one-subject-out)
-python3 -m anomaly.run --model ae        # baseline | ae | ssl
+python3 -m anomaly.run --model ae --bottleneck 256 --ch-cap 32   # baseline | ae | ssl
 
-# retrain + save the deployable model
-python3 -m anomaly.export
+# retrain + compress the deployable int8 model (full reference: COMMANDS.md)
+python3 -m anomaly.export --bottleneck 256 --ch-cap 32 && python3 -m anomaly.compress
 ```
+
+see [`COMMANDS.md`](COMMANDS.md) for the full command cheat sheet.
 
 ## data
 
@@ -146,7 +154,7 @@ anomaly/                             one-class anomaly detector (current directi
   export.py / infer.py               train+save / load the deployable model
   serve.py + static/                 live dashboard (FastAPI + WebSocket + uPlot)
   make_plots.py                      result figures (fig1–4)
-  saved/                             trained model (ae.keras + scorer.npz + *.tflite)
+  saved/                             deployed int8 model (ae_int8.tflite + scorer.npz; keras gitignored)
   RESULTS.md                         model results
 baselines/                           earlier supervised cardiac model (prior work)
   train.py / configs.py / models.py / losses.py / augment.py
@@ -164,6 +172,9 @@ pipeline/                            real-time streaming + dashboard (carries ov
   pipeline.py / run_cli.py
   make_demo_data.py / demo_data.csv  92 s of curated PPG (ships with repo)
   SENSORS_SETUP.md                   Pi + sensor swap guide
+pulse/                               Pulse Watch product UI (Zayed) — served at / by anomaly/serve.py
+  Pulse Watch.dc.html / support.js   design-tool export; speaks serve.py's /ws protocol
 WESAD/ · Code & Data/                datasets (not in git)
+COMMANDS.md                          command cheat sheet
 README.md                            this file
 ```
