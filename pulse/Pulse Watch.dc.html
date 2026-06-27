@@ -356,7 +356,10 @@ input{font-family:inherit}
                   <div style="font-size:13px;color:#6B7787;margin-top:3px">{{ patientName }} · {{ needsCount }} events need review</div>
                 </div>
                 <div style="flex:1"></div>
-                <span style="display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;background:#FFF7E8;border:1px solid #F6E6C0;font-size:11px;font-weight:700;letter-spacing:.03em;color:#B8862A"><span style="width:7px;height:7px;border-radius:999px;background:#F4B740"></span>VISION · MOCK DATA</span>
+                <button onClick="{{ onAskClear }}" style="display:inline-flex;align-items:center;gap:7px;padding:8px 14px;border-radius:10px;background:#fff;border:1px solid #E6EBF2;color:#6B7787;font-weight:600;font-size:13px;cursor:pointer">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18 M8 6V4h8v2 M6 6l1 14h10l1-14"></path></svg>
+                  Clear history
+                </button>
               </div>
               <div style="background:#fff;border:1px solid #E6EBF2;border-radius:20px;box-shadow:0 6px 20px rgba(16,24,40,.06);padding:18px 20px">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:10px">
@@ -382,7 +385,7 @@ input{font-family:inherit}
                       </div>
                       <div style="min-width:0">
                         <div style="font-weight:700;font-size:14px">possible stress · peaked {{ ev.peak }}</div>
-                        <div style="font-size:12px;color:#9AA6B2">{{ ev.date }} {{ ev.time }} · lasted {{ ev.dur }}</div>
+                        <div style="font-size:12px;color:#9AA6B2">{{ ev.when }}</div>
                       </div>
                       <div style="flex:1"></div>
                       <span style="display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;background:{{ ev.statusSoft }}"><span style="width:7px;height:7px;border-radius:999px;background:{{ ev.statusColor }}"></span><span style="font-size:12px;font-weight:700;color:{{ ev.statusColor }}">{{ ev.statusLabel }}</span></span>
@@ -565,6 +568,25 @@ input{font-family:inherit}
       </div>
     </sc-if>
 
+    <!-- CLEAR HISTORY CONFIRM -->
+    <sc-if value="{{ confirmClear }}" hint-placeholder-val="{{ false }}">
+      <div style="position:fixed;inset:0;background:rgba(16,24,40,.42);z-index:80;display:flex;align-items:center;justify-content:center;padding:20px">
+        <div style="background:#fff;border-radius:22px;width:min(400px,96vw);padding:24px;box-shadow:0 24px 70px rgba(16,24,40,.26)">
+          <div style="display:flex;align-items:center;gap:12px">
+            <div style="width:44px;height:44px;border-radius:12px;background:#FDECEA;display:flex;align-items:center;justify-content:center;flex:none">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#F2645A" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18 M8 6V4h8v2 M6 6l1 14h10l1-14"></path></svg>
+            </div>
+            <div style="font-weight:800;font-size:18px">Clear history?</div>
+          </div>
+          <div style="font-size:14px;color:#6B7787;line-height:1.6;margin-top:12px">This removes all logged flag events. This can't be undone.</div>
+          <div style="display:flex;gap:10px;margin-top:20px">
+            <button onClick="{{ onCancelClear }}" style="flex:1;padding:12px;border-radius:12px;background:#fff;border:1px solid #E6EBF2;color:#1B2430;font-weight:600;font-size:15px;cursor:pointer">Cancel</button>
+            <button onClick="{{ onConfirmClear }}" style="flex:1;padding:12px;border-radius:12px;background:#F2645A;border:none;color:#fff;font-weight:700;font-size:15px;cursor:pointer;box-shadow:0 6px 16px rgba(242,100,90,.28)">Clear all</button>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
     <!-- TOAST -->
     <sc-if value="{{ hasToast }}" hint-placeholder-val="{{ false }}">
       <div style="position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:90;background:#1B2430;color:#fff;padding:12px 20px;border-radius:999px;font-size:13px;font-weight:500;box-shadow:0 10px 30px rgba(16,24,40,.3);animation:fadein .3s ease">{{ toast }}</div>
@@ -606,7 +628,7 @@ class Component extends DCLogic {
   PERIOD = 180;
 
   state = {
-    authed:false, route:'monitor', methodOpen:false, calibOpen:false,
+    authed:false, route:'monitor', methodOpen:false, calibOpen:false, confirmClear:false,
     mode: (typeof window!=='undefined' && window.innerWidth<700)?'phone':((typeof window!=='undefined' && window.innerWidth<1024)?'tablet':'desktop'),
     running:false, connected:false, useLive:false, source:'replay', deviceConnected:false,
     subject:'S5', patientName:'Aisha N.',
@@ -615,19 +637,15 @@ class Component extends DCLogic {
     thrLevel:0.42, sensitivity:0.5, preset:'Balanced',
     statusState:'paused', flagTimeStr:'', events:[],
     poorInject:false, toast:null,
-    patients:[
-      {id:'mara',name:'Mara L.',status:'flagged',bpm:96,last:'flagged 2 min ago',q:'good'},
-      {id:'tom',name:'Tom R.',status:'warming',bpm:null,last:'warming up',q:'fair'},
-      {id:'aisha',name:'Aisha N.',status:'calm',bpm:74,last:'all calm',q:'good'},
-      {id:'devon',name:'Devon K.',status:'calm',bpm:68,last:'all calm',q:'good'}
-    ],
-    reviewEvents:[
-      {id:'r1',time:'14:32',date:'Today',peak:71,dur:'2m 4s',status:'needs',bpm:94,spo2:96,motion:'still',note:''},
-      {id:'r2',time:'13:58',date:'Today',peak:58,dur:'1m 12s',status:'needs',bpm:88,spo2:97,motion:'still',note:''},
-      {id:'r3',time:'11:20',date:'Today',peak:64,dur:'48s',status:'reviewed',bpm:90,spo2:97,motion:'active',note:'After taking the stairs — expected.'},
-      {id:'r4',time:'09:05',date:'Today',peak:52,dur:'1m 30s',status:'dismissed',bpm:85,spo2:98,motion:'still',note:''}
-    ],
-    noteOpen:null
+    patients:[],          // unused — Patients tab is built live from the stream
+    reviewEvents:[],       // unused — History tab is built live from st.events
+    noteOpen:null,
+    // restore a persisted session so a browser refresh doesn't wipe everything — see persist()
+    ...(()=>{ try{ const s=JSON.parse(localStorage.getItem('pulsewatch_v1')||'{}');
+      return { authed:!!s.authed, route:s.route||'monitor',
+               events:Array.isArray(s.events)?s.events:[],
+               patientName:s.patientName||'Aisha N.' };
+    }catch(e){ return {}; } })()
   };
 
   // runtime (non-render) fields
@@ -639,9 +657,15 @@ class Component extends DCLogic {
     this.reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     this._onResize = ()=>{ const vw=window.innerWidth; const m = vw<700?'phone':(vw<1024?'tablet':'desktop'); if(m!==this.state.mode) this.setState({mode:m}); };
     window.addEventListener('resize', this._onResize);
+    this._onUnload = ()=>this.persist(); window.addEventListener('beforeunload', this._onUnload);
+    // restore the open-episode tracker so a refresh CONTINUES the episode (no duplicate row)
+    try{ const s=JSON.parse(localStorage.getItem('pulsewatch_v1')||'{}'); this.curEvent = s.curEvent||null; }catch(e){ this.curEvent=null; }
+    if(!this.curEvent){ const ev=this.state.events; if(ev.some(e=>e&&e.dur==='ongoing')) this.setState({events:ev.map(e=>(e&&e.dur==='ongoing')?{...e,dur:'—'}:e)}); }
+    if(this.state.authed){ this.connectLive(); }   // restored a logged-in session → reconnect live
     this._raf = requestAnimationFrame(this.frame);
   }
-  componentWillUnmount(){ cancelAnimationFrame(this._raf); window.removeEventListener('resize',this._onResize); if(this.ws){try{this.ws.close()}catch(e){}} }
+  persist(){ try{ localStorage.setItem('pulsewatch_v1', JSON.stringify({ authed:this.state.authed, route:this.state.route, events:this.state.events, patientName:this.state.patientName, curEvent:this.curEvent })); }catch(e){} }
+  componentWillUnmount(){ cancelAnimationFrame(this._raf); window.removeEventListener('resize',this._onResize); window.removeEventListener('beforeunload',this._onUnload); this.persist(); if(this.ws){try{this.ws.close()}catch(e){}} }
 
   // ---------- scenario ----------
   lerp(a,b,t){ return a+(b-a)*t; }
@@ -664,6 +688,7 @@ class Component extends DCLogic {
     this.beatEnv=Math.max(0,(this.beatEnv||0)-dt*5);
     this.drawWave(); this.drawTrend(); this.drawGauge();
     if(now-this.lastPaint>140){ this.lastPaint=now; this.flushPaint(); if(this.historyRef.current) this.drawHistory(); if(this.methodRef.current) this.drawMethod(); }
+    if(now-(this.lastSave||0)>2000){ this.lastSave=now; this.persist(); }
     this._raf=requestAnimationFrame(this.frame);
   };
 
@@ -695,12 +720,25 @@ class Component extends DCLogic {
       if(this.smooth > this.state.thrLevel){ if(this.flagSince==null)this.flagSince=c.elapsed; this.calmSince=null; if(c.elapsed-this.flagSince>2) flag=true; }
       else if(this.smooth < this.state.thrLevel*0.9){ if(this.calmSince==null)this.calmSince=c.elapsed; this.flagSince=null; if(c.elapsed-this.calmSince>2) flag=false; }
     }
-    // events
-    if(flag && !this.curEvent){ this.curEvent={ start:c.elapsed, peak:this.smooth, time:this.fmt(c.elapsed) }; }
-    if(this.curEvent){ if(this.smooth>this.curEvent.peak) this.curEvent.peak=this.smooth; }
+    // events — log the episode the MOMENT it's flagged (so History fills live),
+    // then finalize its peak + duration when it ends
+    if(flag && !this.curEvent){
+      const id='e'+Math.round(c.elapsed*1000);
+      this.curEvent={ id, start:c.elapsed, peak:this.smooth, time:new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit',hour12:true}) };
+      const ev={ id, time:this.curEvent.time, date:'Today',
+        peak:Math.round(this.smooth*100)+'%', peakNum:Math.round(this.smooth*100),
+        dur:'ongoing', durSec:0, status:'needs', note:'',
+        bpm:(c.bpm!=null?c.bpm:'—'), spo2:(c.spo2!=null?c.spo2:'—'),
+        motion:(c.motion!=null&&c.motion>=0.12)?'active':'still' };
+      this.setState({ events:[ev, ...this.state.events].slice(0,20) });
+    }
+    if(this.curEvent && this.smooth>this.curEvent.peak) this.curEvent.peak=this.smooth;
     if(!flag && this.curEvent){
-      const ev={ id:'e'+Math.round(c.elapsed*1000), time:this.curEvent.time, peak:Math.round(this.curEvent.peak*100)+'%', dur:this.dur(c.elapsed-this.curEvent.start), peakNum:Math.round(this.curEvent.peak*100), durSec:Math.round(c.elapsed-this.curEvent.start) };
-      const list=[ev, ...this.state.events].slice(0,6); this.setState({events:list}); this.curEvent=null;
+      const ce=this.curEvent; this.curEvent=null;
+      const list=this.state.events.map(e=> e.id===ce.id
+        ? {...e, peak:Math.round(ce.peak*100)+'%', peakNum:Math.round(ce.peak*100),
+           dur:this.dur(c.elapsed-ce.start), durSec:Math.round(c.elapsed-ce.start)} : e);
+      this.setState({events:list});
     }
     let flagTimeStr = this.state.flagTimeStr;
     if(flag && this.curEvent) flagTimeStr = this.curEvent.time;
@@ -735,7 +773,11 @@ class Component extends DCLogic {
 
   // ---------- live WS ----------
   connectLive(url){
-    const u = url || this.props.wsUrl || ('ws://'+((typeof location!=='undefined'&&location.hostname)||'localhost')+':8000/ws');
+    // default to the SAME origin that served this page (the anomaly pipeline's
+    // FastAPI app exposes /ws), so the watch works wherever serve.py is hosted.
+    const proto=(typeof location!=='undefined'&&location.protocol==='https:')?'wss':'ws';
+    const host=(typeof location!=='undefined'&&location.host)||'localhost:8001';
+    const u = url || this.props.wsUrl || (proto+'://'+host+'/ws');
     this.setState({useLive:true});
     let opened=false;
     try{
@@ -749,13 +791,20 @@ class Component extends DCLogic {
   }
   fallbackMock(msg){ this.ws=null; this.setState({useLive:false, source:'replay', deviceConnected:false, connected:true, running:true, toast:msg+' — using demo replay'}); clearTimeout(this._tT); this._tT=setTimeout(()=>this.setState({toast:null}),3600); }
   onWsMsg(m){
-    if(m.type==='hello'){ this.setState({ fs:m.fs||64, winS:m.win_s||60, win:(m.fs||64)*(m.win_s||60), thrLevel:m.thr_level??0.42, subject:m.subject||'S5', running:!!m.running, source:m.source||'device', deviceConnected:m.device_connected!==false }); }
+    if(m.type==='hello'){ const sv=m.sensitivity; const st={ fs:m.fs||64, winS:m.win_s||60, win:(m.fs||64)*(m.win_s||60), thrLevel:m.thr_level??0.42, subject:m.subject||'S5', running:!!m.running, source:m.source||'device', deviceConnected:m.device_connected!==false }; if(sv!=null){ st.sensitivity=sv; st.preset=sv>=0.64?'Cautious':(sv<=0.37?'Strict':'Balanced'); } this.setState(st); }
     else if(m.type==='f'){
       if(Array.isArray(m.bvp)){ for(const v of m.bvp) this.wave.push(v); if(this.wave.length>960) this.wave.splice(0,this.wave.length-960); }
       const q = (m.quality!=null)?m.quality:0.9;
       this.simClock=m.elapsed||this.simClock;
       this.cur={ level:m.level??0, bpm:(m.bpm!=null?m.bpm:null), spo2:(m.spo2!=null?m.spo2:null), motion:(m.motion!=null?m.motion:0), q:q, buf:m.buf??this.state.win, win:m.win??this.state.win, elapsed:m.elapsed||0, label:m.label||'—', flagProvided:true, flag:!!m.flag };
       if(m.running!=null && m.running!==this.state.running) this.setState({running:m.running});
+    } else if(m.type==='thr'){
+      // sensitivity retuned on the server (here or from the dev dashboard) — sync the gauge
+      const s=this.state; const patch={};
+      if(m.thr_level!=null) patch.thrLevel=m.thr_level;
+      if(m.sensitivity!=null){ patch.sensitivity=m.sensitivity;
+        patch.preset = m.sensitivity>=0.64?'Cautious':(m.sensitivity<=0.37?'Strict':'Balanced'); }
+      this.setState(patch);
     } else if(m.type==='state'){ this.setState({running:!!m.running}); }
   }
 
@@ -839,7 +888,7 @@ class Component extends DCLogic {
 
   // ---------- actions ----------
   go(r){ this.setState({route:r}); }
-  doLogin(){ this.setState({authed:true, route:'monitor'}); const auto=this.props.autoRun!==false; if(this.props.wsUrl){ this.connectLive(); } else if(auto){ this.setState({running:true, connected:true}); } }
+  doLogin(){ this.setState({authed:true, route:'monitor'}); this.connectLive(); /* live-first; connectLive() falls back to the built-in mock replay if /ws is unreachable */ }
   start(){ if(this.state.useLive&&this.ws){ try{this.ws.send(JSON.stringify({cmd:'start'}))}catch(e){} } this.setState({running:true, connected:true}); }
   pause(){ if(this.state.useLive&&this.ws){ try{this.ws.send(JSON.stringify({cmd:'pause'}))}catch(e){} } this.setState({running:false}); }
   reset(){ this.simClock=0; this.phase=0; this.smooth=0; this.wave=[]; this.levelHist=[]; this.flagSince=this.calmSince=null; this.curEvent=null; this.lastHist=0; if(this.state.useLive&&this.ws){ try{this.ws.send(JSON.stringify({cmd:'reset'}))}catch(e){} } this.setState({events:[], elapsed:0, buf:0, level:0, flag:false, bpm:null, statusState:this.state.running?'warming':'paused'}); }
@@ -852,13 +901,16 @@ class Component extends DCLogic {
 
   openPatient(p){ this.setState({patientName:p.name, route:'monitor'}); }
   reviewAct(id, action){
-    const list=this.state.reviewEvents.map(e=>{ if(e.id!==id) return e;
+    const list=this.state.events.map(e=>{ if(e.id!==id) return e;
       if(action==='ack') return {...e,status:'reviewed'};
       if(action==='not') return {...e,status:'dismissed'};
       return e; });
-    this.setState({reviewEvents:list, noteOpen: action==='note'?(this.state.noteOpen===id?null:id):this.state.noteOpen});
+    this.setState({events:list, noteOpen: action==='note'?(this.state.noteOpen===id?null:id):this.state.noteOpen});
   }
-  saveNote(id,val){ const list=this.state.reviewEvents.map(e=> e.id===id?{...e,note:val,status:'reviewed'}:e); this.setState({reviewEvents:list, noteOpen:null}); }
+  saveNote(id,val){ const list=this.state.events.map(e=> e.id===id?{...e,note:val,status:'reviewed'}:e); this.setState({events:list, noteOpen:null}); }
+  askClear(){ this.setState({confirmClear:true}); }
+  cancelClear(){ this.setState({confirmClear:false}); }
+  clearHistory(){ this.curEvent=null; this.setState({events:[], confirmClear:false, noteOpen:null}); this.persist(); }
   toggleLive(){ if(this.state.useLive){ if(this.ws){try{this.ws.close()}catch(e){}} this.ws=null; this.setState({useLive:false,source:'replay',deviceConnected:false,connected:true,running:true}); } else { this.connectLive(); } }
   togglePoor(){ this.setState({poorInject:!this.state.poorInject}); }
 
@@ -866,8 +918,8 @@ class Component extends DCLogic {
     const cv=this.historyRef.current; if(!cv) return; const {ctx,w,h}=this.prep(cv); ctx.clearRect(0,0,w,h);
     const padL=4,padR=4,padT=12,padB=20, pw=w-padL-padR, plot=h-padT-padB;
     const Y=v=>padT+plot-Math.max(0,Math.min(1,v))*plot;
-    const evs=this.state.reviewEvents; const centers=[0.16,0.40,0.66,0.88]; const sig=0.045;
-    const lvlAt=x=>{ let v=0.09; for(let i=0;i<evs.length;i++){ const c=centers[i%centers.length]; v+=(evs[i].peak/100)*Math.exp(-((x-c)*(x-c))/(2*sig*sig)); } return Math.min(1,v); };
+    const evs=this.state.events; const centers=[0.16,0.40,0.66,0.88]; const sig=0.045;
+    const lvlAt=x=>{ let v=0.09; for(let i=0;i<evs.length;i++){ const c=centers[i%centers.length]; v+=(evs[i].peakNum/100)*Math.exp(-((x-c)*(x-c))/(2*sig*sig)); } return Math.min(1,v); };
     const thr=this.state.thrLevel, thrY=Y(thr);
     ctx.fillStyle='rgba(242,100,90,.06)'; ctx.fillRect(padL,padT,pw,thrY-padT);
     ctx.strokeStyle='#EFF3F8'; ctx.lineWidth=1; [0,0.5,1].forEach(g=>{ const y=Math.round(Y(g))+.5; ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-padR,y); ctx.stroke(); });
@@ -879,7 +931,7 @@ class Component extends DCLogic {
     ctx.beginPath(); ctx.moveTo(padL,h-padB); for(let i=0;i<=160;i++){ const x=i/160; ctx.lineTo(padL+x*pw,Y(lvlAt(x))); } ctx.lineTo(w-padR,h-padB); ctx.closePath(); ctx.fillStyle=g; ctx.fill();
     ctx.beginPath(); for(let i=0;i<=160;i++){ const x=i/160; const px=padL+x*pw,py=Y(lvlAt(x)); if(i===0)ctx.moveTo(px,py); else ctx.lineTo(px,py); } ctx.strokeStyle='#F2645A'; ctx.lineWidth=2; ctx.lineJoin='round'; ctx.stroke();
     // flag markers
-    evs.forEach((e,i)=>{ const c=centers[i%centers.length]; const px=padL+c*pw; const py=Y(e.peak/100); if(e.peak/100>thr){ ctx.beginPath(); ctx.arc(px,py,3.4,0,Math.PI*2); ctx.fillStyle='#F2645A'; ctx.fill(); ctx.strokeStyle='#fff'; ctx.lineWidth=1.5; ctx.stroke(); } });
+    evs.forEach((e,i)=>{ const c=centers[i%centers.length]; const px=padL+c*pw; const py=Y(e.peakNum/100); if(e.peakNum/100>thr){ ctx.beginPath(); ctx.arc(px,py,3.4,0,Math.PI*2); ctx.fillStyle='#F2645A'; ctx.fill(); ctx.strokeStyle='#fff'; ctx.lineWidth=1.5; ctx.stroke(); } });
     ctx.fillStyle='#9AA6B2'; ctx.font='10px Plus Jakarta Sans, sans-serif'; ctx.textAlign='left'; ctx.fillText('09:00',padL+2,h-5); ctx.textAlign='center'; ctx.fillText('12:00',padL+pw*0.5,h-5); ctx.textAlign='right'; ctx.fillText('now',w-padR-2,h-5);
   }
   drawMethod(){
@@ -965,13 +1017,19 @@ class Component extends DCLogic {
       warming:{word:'Warming up',color:'#5B8DEF',soft:'#ECF2FE',icon:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l3 2'},
       calm:{word:'Calm',color:'#2BAE73',soft:'#E9F9F0',icon:'M20 6.5L9.5 17 4 11.5'}
     };
-    const order={flagged:0,warming:1,calm:2};
-    const patientsVM=[...st.patients].sort((a,b)=>order[a.status]-order[b.status]).map(p=>{ const s=stPres[p.status]; return {id:p.id,name:p.name,initials:p.name.split(' ').map(x=>x[0]).join('').slice(0,2),statusWord:s.word,statusColor:s.color,statusSoft:s.soft,statusIcon:s.icon,bpm:p.bpm==null?'—':p.bpm,last:p.last,qColor:p.q==='good'?'#3DCB7F':(p.q==='fair'?'#F4B740':'#94A3B8'),isActive:p.name===st.patientName,onClick:()=>this.openPatient(p)}; });
-    const flaggedCount=st.patients.filter(p=>p.status==='flagged').length;
+    // single live patient = the connected stream (this is a single-device demo)
+    const liveStatus = st.statusState==='flagged'?'flagged':(st.statusState==='warming'?'warming':'calm');
+    const liveLast = liveStatus==='flagged' ? ('flagged '+(st.flagTimeStr||'now'))
+                   : liveStatus==='warming' ? 'warming up'
+                   : (st.statusState==='paused'?'paused':(st.statusState==='offline'?'disconnected':'all calm'));
+    const livePatient = {id:'live', name:st.patientName, status:liveStatus,
+      bpm:(st.bpm==null?null:st.bpm), last:liveLast, q:st.qualityLabel};
+    const patientsVM=[livePatient].map(p=>{ const s=stPres[p.status]; return {id:p.id,name:p.name,initials:p.name.split(' ').map(x=>x[0]).join('').slice(0,2),statusWord:s.word,statusColor:s.color,statusSoft:s.soft,statusIcon:s.icon,bpm:p.bpm==null?'—':p.bpm,last:p.last,qColor:p.q==='good'?'#3DCB7F':(p.q==='fair'?'#F4B740':'#94A3B8'),isActive:true,onClick:()=>this.openPatient(p)}; });
+    const flaggedCount = liveStatus==='flagged'?1:0;
 
     const revMap={needs:{label:'Needs review',color:'#E0982A',soft:'#FEF6E6'},reviewed:{label:'Reviewed',color:'#2BAE73',soft:'#E9F9F0'},dismissed:{label:'Dismissed',color:'#7C8898',soft:'#EEF1F5'}};
-    const reviewVM=st.reviewEvents.map(e=>{ const r=revMap[e.status]; return {id:e.id,time:e.time,date:e.date,peak:e.peak+'%',dur:e.dur,statusLabel:r.label,statusColor:r.color,statusSoft:r.soft,bpm:e.bpm,spo2:e.spo2,motion:e.motion,note:e.note,hasNote:!!e.note,isNeeds:e.status==='needs',noteOpen:st.noteOpen===e.id,onAck:()=>this.reviewAct(e.id,'ack'),onNot:()=>this.reviewAct(e.id,'not'),onNote:()=>this.reviewAct(e.id,'note'),onSaveNote:(ev)=>{ if(ev.key==='Enter'){ this.saveNote(e.id,ev.target.value);} }}; });
-    const needsCount=st.reviewEvents.filter(e=>e.status==='needs').length;
+    const reviewVM=st.events.map(e=>{ const r=revMap[e.status]||revMap.needs; return {id:e.id,time:e.time,date:e.date,peak:e.peakNum+'%',dur:e.dur,when:e.date+' '+e.time+(e.dur==='ongoing'?'':' · lasted '+e.dur),statusLabel:r.label,statusColor:r.color,statusSoft:r.soft,bpm:e.bpm,spo2:e.spo2,motion:e.motion,note:e.note,hasNote:!!e.note,isNeeds:e.status==='needs',noteOpen:st.noteOpen===e.id,onAck:()=>this.reviewAct(e.id,'ack'),onNot:()=>this.reviewAct(e.id,'not'),onNote:()=>this.reviewAct(e.id,'note'),onSaveNote:(ev)=>{ if(ev.key==='Enter'){ this.saveNote(e.id,ev.target.value);} }}; });
+    const needsCount=st.events.filter(e=>e.status==='needs').length;
 
     const cb=this.calib||{progress:0,phase:'prepare',q:0.95};
     const cc=(cb.progress||0)>=1, cqok=(cb.q||0)>=0.8;
@@ -996,7 +1054,8 @@ class Component extends DCLogic {
       patientName: st.patientName, patientInitials: st.patientName.split(' ').map(x=>x[0]).join('').slice(0,2),
       sourceLabel, srcBg: sourceLive?'#E9F9F0':'#F0F4F9', srcDot: sourceLive?'#2BAE73':'#7C8898', srcText: sourceLive?'#2BAE73':'#6B7787',
       connColor: connected?'#3DCB7F':'#94A3B8', connText: connected?'Connected':'Offline',
-      onOpenMethod:()=>this.setState({methodOpen:true}), onLogout:()=>this.setState({authed:false, running:false}),
+      onOpenMethod:()=>this.setState({methodOpen:true}), onLogout:()=>{ try{ localStorage.removeItem('pulsewatch_v1'); }catch(e){} this.setState({authed:false, running:false, events:[]}); },
+      confirmClear: st.confirmClear, onAskClear:()=>this.askClear(), onCancelClear:()=>this.cancelClear(), onConfirmClear:()=>this.clearHistory(),
       // routes
       isMonitor: st.route==='monitor', isPatients: st.route==='patients', isHistory: st.route==='history', isSettings: st.route==='settings',
       monGrid: (m==='phone'||m==='tablet')?'1fr':'minmax(0,1.18fr) minmax(0,1fr)',
@@ -1007,7 +1066,7 @@ class Component extends DCLogic {
       gaugeWidth: ((warming&&running)?0:lvlPct)+'%', gaugeColor:gColor,
       thrLeft:(thr*100)+'%', thrPct:Math.round(thr*100)+'%',
       gaugeCenterBig: (running&&warming) ? Math.max(0,Math.ceil((st.win-st.buf)/st.fs))+'s' : (st.statusState==='paused'?'—':(st.statusState==='offline'?'—':lvlPct+'%')),
-      gaugeCenterLabel: (running&&warming) ? 'warming up' : (st.statusState==='paused'?'paused':(st.statusState==='offline'?'offline':(st.statusState==='poorSignal'?'signal weak':'of baseline'))),
+      gaugeCenterLabel: (running&&warming) ? 'warming up' : (st.statusState==='paused'?'paused':(st.statusState==='offline'?'offline':(st.statusState==='poorSignal'?'signal weak':'deviation'))),
       heroBreathe: this.reduceMotion?'none':'breathe 6.5s ease-in-out infinite',
       // vitals
       vit:{ bpm: st.bpm==null?'—':st.bpm, spo2: st.spo2==null?'—':st.spo2, motion: st.motion<0.12?'Still':'Active', motionHint: st.motion<0.12?'at rest':'moving' },
@@ -1033,9 +1092,9 @@ class Component extends DCLogic {
       onOpenCalib:()=>this.openCalib(), showCalibPrompt: st.route==='monitor' && !this._personalized,
       // overlays
       // patients
-      patientsVM, flaggedCount, patientsCount: st.patients.length,
+      patientsVM, flaggedCount, patientsCount: patientsVM.length,
       // history
-      reviewVM, needsCount, reviewCount: st.reviewEvents.length, historyRef:this.historyRef,
+      reviewVM, needsCount, reviewCount: st.events.length, historyRef:this.historyRef,
       // settings
       useLive: st.useLive, poorInject: st.poorInject, wsUrlDisp:(this.props.wsUrl||'ws://<device-ip>:8000/ws'),
       onToggleLive:()=>this.toggleLive(), onTogglePoor:()=>this.togglePoor(), sourceModeLabel: sourceLive?'Live device':'Replay (demo)',

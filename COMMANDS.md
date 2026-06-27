@@ -26,15 +26,21 @@ dataset download: [Borealis Data](https://borealisdata.ca/dataset.xhtml?persiste
 
 ## 2. anomaly detection (current direction)
 
-the one-class stress detector on WESAD wrist BVP. a trained model ships in
-`anomaly/saved/`, so the live dashboard runs **without** needing WESAD.
+the one-class stress detector on WESAD wrist BVP. the deployable model ships as
+`anomaly/saved/ae_int8.tflite` (4 MB), so the live dashboard runs **without** WESAD.
 
-### live dashboard
+### live dashboards
 
 ```bash
-python3 -m anomaly.serve                 # → http://localhost:8001, then ▶ Start
+python3 -m anomaly.serve                 # → http://localhost:8001
 python3 -m anomaly.serve --subject S17   # other clean demo subjects: S17, S7
 ```
+
+- `/` (alias `/watch`) — **Pulse Watch** product UI (default view)
+- `/dev` — developer dashboard: model flag vs WESAD ground truth (TP/FP/FN/TN +
+  precision/recall), true-stress band, and the **sensitivity slider**
+- both run the same model + `/ws`; the dashboard runs `ae_int8.tflite` — the exact
+  model the ESP32 runs
 
 ### evaluate the detectors (needs WESAD in `WESAD/`)
 
@@ -48,15 +54,37 @@ python3 -m anomaly.wesad                  # window counts per condition
 leave-one-subject-out; numbers also in `anomaly/RESULTS.md`. the first run reads
 ~13 GB of WESAD pickles once, then caches to `WESAD/_harness_cache/`.
 
-### retrain + save the deployable model
+### model-improvement levers (only affect `--model ae`)
 
 ```bash
-python3 -m anomaly.export                      # → anomaly/saved/ae.keras + scorer.npz
-python3 -m anomaly.export --spec 0.90 --epochs 40
+python3 -m anomaly.run --model ae --bottleneck 256              # real latent (over-complete fix)
+python3 -m anomaly.run --model ae --bottleneck 256 --ch-cap 32  # ESP32-sized  ← DEPLOYED config
+python3 -m anomaly.run --model ae --bottleneck 256 --ch-cap 32 --denoise 0.15   # + noise-robust
+```
+
+deployed config (bottleneck-256 ch-cap32) = LOSO **PR-AUC 0.706 / recall@90spec 0.545**.
+
+### deploy a model (train → compress)
+
+```bash
+python3 -m anomaly.export --bottleneck 256 --ch-cap 32   # train + save ae.keras
+python3 -m anomaly.compress                              # → ae_int8.tflite + int8-calibrated scorer
+```
+
+- always run `compress` after `export` — it rewrites `scorer.npz` on the int8 score
+  scale, which the dashboard needs to flag correctly
+- commit only `ae_int8.tflite` (4 MB) + `scorer.npz`; `ae.keras` (46 MB) +
+  `ae_float32.tflite` (16 MB) are regenerated locally and **gitignored**
+- deployed int8: 4.0 MB, 1.49 ms/window, fits the ESP32-S3-N16R8 (16 MB flash / 8 MB PSRAM)
+
+### per-user calibration (O6 method)
+
+```bash
+python3 -m anomaly.calibrate              # zero-shot vs device-calibrated: PR-AUC 0.75 -> 0.87
 ```
 
 WESAD is ~17 GB and gitignored — download it and unzip into `WESAD/`. `ae`/`ssl`/
-`serve` use TensorFlow (a `baselines/requirements.txt` dep); for GPU install
+`serve`/`compress` use TensorFlow (a `baselines/requirements.txt` dep); for GPU install
 `tensorflow[and-cuda]`.
 
 ---
@@ -260,8 +288,8 @@ it isn't anymore — the model is warmed up at startup (you'll see
 | File / folder | Purpose |
 |---|---|
 | `anomaly/` | **one-class anomaly detector (current direction)** |
-| `anomaly/serve.py` + `anomaly/static/` | the live anomaly dashboard |
-| `anomaly/saved/ae.keras` | trained deployable autoencoder (3.2 MB, committed) |
+| `anomaly/serve.py` + `anomaly/static/` | the live anomaly dashboards (`/` Pulse Watch, `/dev` developer) |
+| `anomaly/saved/ae_int8.tflite` | deployed model — int8 TFLite (4 MB, committed; dashboard + ESP32 run this) |
 | `anomaly/RESULTS.md` | one-class detector results (PR-AUC, recall@90%) |
 | `WESAD/` | WESAD dataset (~17 GB, not in git) |
 | `baselines/runs/2026-05-17_163328_phase_a/model.keras` | the earlier supervised model |

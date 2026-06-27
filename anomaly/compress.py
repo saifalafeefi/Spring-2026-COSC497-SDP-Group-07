@@ -109,12 +109,24 @@ def main():
               f"{size/1024:6.0f} KB  {lat}")
 
     keras_kb = os.path.getsize(os.path.join(SAVE_DIR, "ae.keras"))
+    si8 = _tflite_mse(i8, Xz)                          # int8 scores (reused below)
     print("\nmodel                    metrics                          size    CPU latency/window")
     report("keras float32 (ref)", sk, keras_kb, "—")
     report("tflite float32", _tflite_mse(fp32, Xz), len(fp32), f"{_latency_ms(fp32,Xz):.2f} ms")
     tag = "tflite int8" if i8_ok else "tflite int8 (dyn-range)"
-    report(tag, _tflite_mse(i8, Xz), len(i8), f"{_latency_ms(i8,Xz):.2f} ms")
+    report(tag, si8, len(i8), f"{_latency_ms(i8,Xz):.2f} ms")
     print(f"\nint8 vs keras: {keras_kb/len(i8):.1f}x smaller; the metric gap above is the compression cost.")
+
+    # re-calibrate scorer.npz on the INT8 score distribution, so the live dashboard
+    # (which now runs ae_int8.tflite) flags on the same scale as the deployed device.
+    calm_i8 = si8[:len(calm)]
+    np.savez(os.path.join(SAVE_DIR, "scorer.npz"),
+             threshold=float(np.quantile(calm_i8, 0.90)),   # 90% specificity on calm
+             win_len=int(Xz.shape[1]),
+             ref_lo=float(np.median(calm_i8)),               # display: 0% level
+             ref_hi=float(np.quantile(calm_i8, 0.99)))       # display: ~100% level
+    print(f"saved int8-calibrated scorer → {SAVE_DIR}/scorer.npz  "
+          f"(the dashboard now runs ae_int8.tflite — same model as the device)")
 
 
 if __name__ == "__main__":

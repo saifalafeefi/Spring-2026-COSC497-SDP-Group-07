@@ -38,6 +38,19 @@
   ul#log li{padding:5px 2px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
   .help{font-size:12px;color:var(--muted);line-height:1.5;margin-top:10px}
   .help code{color:var(--text)}
+  /* detection-sensitivity control — the operating-point instrument */
+  .sens{display:flex;align-items:center;gap:14px;margin-top:10px}
+  .sens .end{font-size:11px;color:var(--muted);line-height:1.3;white-space:nowrap}
+  .sens input[type=range]{flex:1;-webkit-appearance:none;appearance:none;height:6px;border-radius:6px;
+    background:linear-gradient(90deg,#2E86AB,#E07A5F,#c0392b);outline:none;cursor:pointer}
+  .sens input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;
+    background:#e6edf3;border:2px solid #2E86AB;box-shadow:0 1px 3px rgba(0,0,0,.45)}
+  .sens input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:#e6edf3;
+    border:2px solid #2E86AB;box-shadow:0 1px 3px rgba(0,0,0,.45)}
+  .sens input[type=range]:focus-visible{box-shadow:0 0 0 3px rgba(46,134,171,.5)}
+  .sensread{display:flex;justify-content:space-between;align-items:baseline;margin-top:10px;
+    font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .sensread b{color:var(--text);font-size:14px}
 </style>
 </head>
 <body>
@@ -61,8 +74,14 @@
       <div class="hint" id="thrhint">flag threshold: —</div></div>
     <div class="metric"><div class="lbl">Recon. error (MSE)</div><div class="val" id="m-score">—</div>
       <div class="hint" id="scorehint">threshold: —</div></div>
+    <div class="metric"><div class="lbl">Signal quality</div><div class="val" id="m-qual">—</div>
+      <div class="hint">0–1 · PPG cleanliness (context, not the flag)</div></div>
+    <div class="metric"><div class="lbl">AI flag</div><div class="val" id="m-flag">—</div>
+      <div class="hint">the model's own decision</div></div>
     <div class="metric"><div class="lbl">Ground truth (WESAD)</div><div class="val" id="m-truth">—</div>
       <div class="hint">what the subject was actually doing</div></div>
+    <div class="metric"><div class="lbl">Agreement</div><div class="val" id="m-verdict">—</div>
+      <div class="hint" id="verdicthint">AI vs truth, this second</div></div>
     <div class="metric"><div class="lbl">Elapsed</div><div class="val" id="m-el">0 s</div>
       <div class="hint" id="bufhint">window: —</div></div>
   </div>
@@ -79,9 +98,44 @@
   </div>
 
   <div class="panel">
+    <h2>Detection sensitivity</h2>
+    <div class="cap">the model's operating point. drag toward fewer misses or fewer false
+      alarms — it moves the flag threshold (red line below) live; the scorecard resets so
+      precision/recall reflect this setting. shared with the <a href="/watch" style="color:#2E86AB">Pulse Watch</a> preset.</div>
+    <div class="sens">
+      <span class="end">Strict<br>fewer false alarms</span>
+      <input type="range" id="sens" min="0" max="1" step="0.01" value="0.5"
+             aria-label="detection sensitivity">
+      <span class="end" style="text-align:right">Cautious<br>fewer misses</span>
+    </div>
+    <div class="sensread">
+      <span>preset: <b id="sens-band">—</b></span>
+      <span>flag threshold: <b id="sens-thr">—</b> level · <span id="sens-mse">—</span> MSE</span>
+    </div>
+  </div>
+
+  <div class="panel">
     <h2>Anomaly level over time — last 3 min</h2>
-    <div class="cap" id="levcap">red dashed line = flag threshold · above it = stress flagged</div>
+    <div class="cap" id="levcap">red dashed line = flag threshold · above it = stress flagged ·
+      <span style="color:#E0982A">amber band</span> = true stress (WESAD label)</div>
     <div class="chart" id="levChart"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Model vs ground truth — live scorecard</h2>
+    <div class="cap">the <b>flag is the model's decision</b> (reconstruction error past threshold);
+      the <b>label is WESAD's truth</b>. this scores them against each other every second.</div>
+    <div class="grid">
+      <div class="metric"><div class="lbl">✓ correct catch (TP)</div><div class="val" id="c-tp">0</div>
+        <div class="hint">flagged · was stress</div></div>
+      <div class="metric"><div class="lbl">⚠ false alarm (FP)</div><div class="val" id="c-fp">0</div>
+        <div class="hint">flagged · was calm</div></div>
+      <div class="metric"><div class="lbl">✗ missed (FN)</div><div class="val" id="c-fn">0</div>
+        <div class="hint">not flagged · was stress</div></div>
+      <div class="metric"><div class="lbl">✓ correct calm (TN)</div><div class="val" id="c-tn">0</div>
+        <div class="hint">not flagged · was calm</div></div>
+    </div>
+    <div class="cap" id="prcap" style="margin-top:8px">precision — · recall — · agreement — (seconds scored: 0)</div>
   </div>
 
   <div class="panel">
@@ -95,6 +149,9 @@
     0–100%. when the smoothed level crosses the <b>flag threshold</b> (the red line), the banner
     reads <code>STRESS FLAGGED</code>. the level is smoothed over ~5 s so single noisy windows
     don't trip it. ground truth is the real WESAD label, shown so you can check the alignment.
+    the <b>flag is the model's own output</b>; the <b>label is the dataset's truth</b> — the
+    scorecard above counts where they agree (TP/TN) and disagree (FP/FN) live.
+    <br>product UI (Pulse Watch, same live model): <a href="/watch" style="color:#2E86AB">/watch</a>
   </div>
 </main>
 
@@ -107,11 +164,12 @@ function fmtT(s){ const m=Math.floor(s/60), ss=Math.floor(s%60); return `${m}:${
 
 let FS=64, DISP=960, THR=0.5;
 const bvp={t:[],y:[]};
-const lev={t:[],y:[]};
+const lev={t:[],y:[],g:[]};  // g = ground-truth stress (0/1), shaded behind the level
 const hr={t:[],y:[]};
 const LEVKEEP=180;            // ~3 min at 1 point/s
 let bvpChart=null, levChart=null, hrChart=null;
 let lastSec=-1, prevFlag=false, events=[];
+let tp=0, fp=0, fn=0, tn=0;   // live AI-flag vs WESAD-truth scorecard
 
 const AXIS={stroke:"#8b98a5",grid:{stroke:"#2c3742",width:1},ticks:{stroke:"#2c3742"}};
 function opt(el,series,h,yr,xl,yl){return {width:el.clientWidth||600,height:h,cursor:{show:false},legend:{show:false},
@@ -127,25 +185,54 @@ function ensureCharts(){
     hrChart=new uPlot(opt(h,[{stroke:"#27ae60",width:2,points:{show:false}}],200,
       null,"time (s)","heart rate (BPM)"),[[0],[0]],h);
   if(!levChart && l.clientWidth>0)
-    levChart=new uPlot(opt(l,[{stroke:"#E07A5F",width:2,points:{show:false}},
-      {stroke:"#c0392b",width:1,dash:[6,4],points:{show:false}}],200,[0,1],
-      "time (s)","anomaly level (0–1)"),[[0],[0],[0]],l);
+    levChart=new uPlot(opt(l,[
+      {stroke:"rgba(0,0,0,0)",fill:"rgba(224,152,42,0.16)",width:0,points:{show:false}}, // truth band
+      {stroke:"#E07A5F",width:2,points:{show:false}},                                    // anomaly level
+      {stroke:"#c0392b",width:1,dash:[6,4],points:{show:false}}],200,[0,1],               // threshold
+      "time (s)","anomaly level (0–1)"),[[0],[0],[0],[0]],l);
 }
 function drawBvp(){ if(bvpChart) bvpChart.setData([bvp.t,bvp.y]); }
 function drawHr(){ if(hrChart) hrChart.setData([hr.t,hr.y]); }
-function drawLev(){ if(levChart) levChart.setData([lev.t,lev.y,lev.t.map(()=>THR)]); }
+function drawLev(){ if(levChart) levChart.setData([lev.t,lev.g,lev.y,lev.t.map(()=>THR)]); }
+function renderScore(){
+  setText($("c-tp"),String(tp)); setText($("c-fp"),String(fp));
+  setText($("c-fn"),String(fn)); setText($("c-tn"),String(tn));
+  const n=tp+fp+fn+tn, pct=v=>v==null?"—":Math.round(v*100)+"%";
+  const prec=(tp+fp)?tp/(tp+fp):null, rec=(tp+fn)?tp/(tp+fn):null, acc=n?(tp+tn)/n:null;
+  setText($("prcap"), `precision ${pct(prec)} · recall ${pct(rec)} · agreement ${pct(acc)} (seconds scored: ${n})`);
+}
 window.addEventListener("resize",()=>{ if(bvpChart)bvpChart.setSize({width:$("bvpChart").clientWidth,height:240});
   if(hrChart)hrChart.setSize({width:$("hrChart").clientWidth,height:200});
   if(levChart)levChart.setSize({width:$("levChart").clientWidth,height:200}); drawBvp(); drawHr(); drawLev(); });
 
 let ws=null;
-function send(c){ if(ws&&ws.readyState===1) ws.send(JSON.stringify({cmd:c})); }
+function sendMsg(o){ if(ws&&ws.readyState===1) ws.send(JSON.stringify(o)); }
+function send(c){ sendMsg({cmd:c}); }
 $("btnStart").onclick=()=>send("start");
 $("btnPause").onclick=()=>send("pause");
+
+// ---- detection sensitivity (operating point) ----
+function sensBand(v){ return v>=0.64?"Cautious":(v<=0.37?"Strict":"Balanced"); }
+function sensLevel(v){ return Math.min(0.85,Math.max(0.12,0.62-0.40*v)); }  // == server/watch map
+function updateSensReadout(v){
+  setText($("sens-band"), sensBand(v));
+  setText($("sens-thr"), Math.round(sensLevel(v)*100)+"%");
+}
+let sensThrottle=0;
+$("sens").addEventListener("input", e=>{
+  const v=parseFloat(e.target.value);
+  updateSensReadout(v);                       // optimistic; server confirms the MSE value
+  const now=Date.now();
+  if(now-sensThrottle>60){ sensThrottle=now; sendMsg({cmd:"set_sensitivity",value:v}); }
+});
+$("sens").addEventListener("change", e=>          // ensure the final value lands
+  sendMsg({cmd:"set_sensitivity",value:parseFloat(e.target.value)}));
 $("btnReset").onclick=()=>{ send("reset");
   for(const k in bvp)bvp[k]=[]; for(const k in lev)lev[k]=[]; for(const k in hr)hr[k]=[];
   lastSec=-1; prevFlag=false; events=[]; renderLog();
-  setText($("m-bpm"),"—");
+  tp=fp=fn=tn=0; renderScore();
+  setText($("m-bpm"),"—"); setText($("m-qual"),"—");
+  setText($("m-flag"),"—"); setText($("m-verdict"),"—");
   $("banner").style.background="#7f8c8d"; setText($("banner"),"reset"); drawBvp(); drawHr(); drawLev(); };
 
 function renderLog(){
@@ -170,7 +257,23 @@ function connect(){
       setText($("scorehint"),`threshold: ${m.threshold} MSE`);
       setText($("bufhint"),`window: ${m.win_s}s`);
       $("levthr").style.left=(THR*100)+"%";
+      if(m.sensitivity!=null){ $("sens").value=m.sensitivity; updateSensReadout(m.sensitivity); }
+      setText($("sens-mse"), String(m.threshold));
       requestAnimationFrame(()=>{ ensureCharts(); drawLev(); });
+      return;
+    }
+    if(m.type==="thr"){                          // threshold retuned (here or by Pulse Watch)
+      THR=m.thr_level;
+      $("levthr").style.left=(THR*100)+"%";
+      setText($("thrhint"),`flag threshold: level ${Math.round(THR*100)}%`);
+      setText($("scorehint"),`threshold: ${m.threshold} MSE`);
+      setText($("sens-mse"), String(m.threshold));
+      if(m.sensitivity!=null){
+        if(document.activeElement!==$("sens")) $("sens").value=m.sensitivity;  // don't fight the drag
+        updateSensReadout(m.sensitivity);
+      }
+      tp=fp=fn=tn=0; renderScore();              // operating point changed → score afresh
+      drawLev();
       return;
     }
     if(m.type!=="f") return;
@@ -198,6 +301,7 @@ function connect(){
         $("banner").style.background="#5a6673";
         setText($("banner"),`warming up — ${left}s left (filling 60s window)`);
         setText($("m-level"),"—"); setText($("m-score"),"—");
+        setText($("m-flag"),"—"); setText($("m-verdict"),"—");
       }else{
         setText($("m-level"), Math.round(m.level*100)+"%");
         setText($("m-score"), m.score.toFixed(5));
@@ -205,14 +309,28 @@ function connect(){
         $("levbar").style.background=m.flag?"#c0392b":"#2E86AB";
         $("banner").style.background=m.flag?"#c0392b":"#27ae60";
         setText($("banner"), m.flag?"⚠ STRESS FLAGGED":"✓ CALM");
-        lev.t.push(sec); lev.y.push(m.level);
-        if(lev.t.length>LEVKEEP){ lev.t.shift(); lev.y.shift(); }
+
+        // live scorecard: the MODEL's flag vs WESAD's ground-truth label
+        const truth = (m.label==="STRESS");
+        lev.t.push(sec); lev.y.push(m.level); lev.g.push(truth?1:0);
+        if(lev.t.length>LEVKEEP){ lev.t.shift(); lev.y.shift(); lev.g.shift(); }
         drawLev();
+        let verdict, vcol;
+        if(m.flag&&truth){ tp++; verdict="✓ caught stress"; vcol="#27ae60"; }
+        else if(m.flag&&!truth){ fp++; verdict="⚠ false alarm"; vcol="#c0392b"; }
+        else if(!m.flag&&truth){ fn++; verdict="✗ missed stress"; vcol="#E0982A"; }
+        else { tn++; verdict="✓ correct calm"; vcol="#27ae60"; }
+        setText($("m-flag"), m.flag?"STRESS":"calm");
+        $("m-flag").style.color=m.flag?"#E07A5F":"#27ae60";
+        setText($("m-verdict"), verdict); $("m-verdict").style.color=vcol;
+        renderScore();
+
         if(m.flag && !prevFlag){ events.push({t:m.elapsed,lvl:m.level}); renderLog(); }
         prevFlag=m.flag;
       }
     }
     setText($("m-truth"), m.label);
+    setText($("m-qual"), (m.quality!=null) ? m.quality.toFixed(2) : "—");
   };
 }
 connect();

@@ -66,7 +66,9 @@ def make_detector(args, win_len):
         return MahalanobisDetector(fs=64)
     if args.model == "ae":
         from .autoencoder import AEDetector
-        return AEDetector(win_len=win_len, epochs=args.epochs)
+        return AEDetector(win_len=win_len, epochs=args.epochs,
+                          noise=args.denoise, bottleneck=args.bottleneck,
+                          n_blocks=args.blocks, ch_cap=args.ch_cap)
     from .ssl import SSLDetector
     return SSLDetector(win_len=win_len, epochs=args.epochs)
 
@@ -77,6 +79,20 @@ def main():
     ap.add_argument("--win", type=float, default=60.0, help="window seconds")
     ap.add_argument("--step", type=float, default=5.0, help="step seconds")
     ap.add_argument("--epochs", type=int, default=30, help="AE epochs")
+    ap.add_argument("--denoise", type=float, default=0.0, metavar="SIGMA",
+                    help="denoising AE: train on noise-corrupted windows (e.g. 0.15). "
+                         "0 = off (the validated default). only affects --model ae.")
+    ap.add_argument("--bottleneck", type=int, default=0, metavar="DIM",
+                    help="AE latent width (e.g. 256). >0 adds a real compressed bottleneck "
+                         "— fixes the over-complete AE and sharpens anomaly separation. "
+                         "0 = original architecture. only affects --model ae.")
+    ap.add_argument("--blocks", type=int, default=4, metavar="N",
+                    help="AE encoder depth (stride-2 blocks). more = harder downsampling "
+                         "before the bottleneck = smaller Dense = ESP32-sized model. "
+                         "win must be divisible by 2**N (3840 → up to 8). default 4.")
+    ap.add_argument("--ch-cap", type=int, default=0, metavar="C", dest="ch_cap",
+                    help="cap encoder channels at C (e.g. 32). shrinks the bottleneck Dense. "
+                         "0 = uncapped (original). pair with --blocks for an ESP32 model.")
     ap.add_argument("--max-subjects", type=int, default=0,
                     help="use only the first N subjects (quick checks)")
     args = ap.parse_args()

@@ -28,6 +28,16 @@ def main():
     ap.add_argument("--epochs", type=int, default=40)
     ap.add_argument("--spec", type=float, default=0.90,
                     help="flag threshold = this specificity on calm windows")
+    ap.add_argument("--denoise", type=float, default=0.0, metavar="SIGMA",
+                    help="train a denoising AE (e.g. 0.15); 0 = off. validate with "
+                         "`anomaly.run --model ae --denoise SIGMA` before deploying.")
+    ap.add_argument("--bottleneck", type=int, default=0, metavar="DIM",
+                    help="AE latent width (e.g. 256); 0 = original. validate with "
+                         "`anomaly.run --model ae --bottleneck DIM` before deploying.")
+    ap.add_argument("--blocks", type=int, default=4, metavar="N",
+                    help="AE encoder depth; pair with --ch-cap for an ESP32-sized bottleneck.")
+    ap.add_argument("--ch-cap", type=int, default=0, metavar="C", dest="ch_cap",
+                    help="cap encoder channels (e.g. 32); shrinks the bottleneck Dense.")
     args = ap.parse_args()
 
     win_len = int(round(args.win * 64))
@@ -36,7 +46,9 @@ def main():
     Xs = np.concatenate([data[s][0][np.isin(data[s][1], list(POSITIVE))] for s in data])
     print(f"\ntraining AE on {len(Xn)} calm windows ({args.epochs} epochs)…")
 
-    det = AEDetector(win_len=win_len, epochs=args.epochs).fit(Xn, verbose=0)
+    det = AEDetector(win_len=win_len, epochs=args.epochs, noise=args.denoise,
+                     bottleneck=args.bottleneck, n_blocks=args.blocks,
+                     ch_cap=args.ch_cap).fit(Xn, verbose=0)
 
     mse_n = det.score(Xn)
     mse_s = det.score(Xs)

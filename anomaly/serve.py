@@ -26,10 +26,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
 STATIC_DIR = os.path.join(HERE, "static")
 VENDOR_DIR = os.path.join(REPO_ROOT, "pipeline", "static", "vendor")  # reuse uPlot
+PULSE_DIR = os.path.join(REPO_ROOT, "pulse")                          # Zayed's Pulse Watch UI
 
-# heart-rate helper reused from the carried-over pipeline (works on any PPG @ fs)
+# heart-rate + signal-quality helpers reused from the pipeline (work on any PPG @ fs)
 sys.path.insert(0, os.path.join(REPO_ROOT, "pipeline"))
-from vitals import estimate_heart_rate  # noqa: E402
+from vitals import estimate_heart_rate, signal_quality_score  # noqa: E402
 
 WIN_LEN = 60 * FS              # 60 s inference window
 DISPLAY = 15 * FS             # 15 s of BVP on the chart
@@ -52,6 +53,9 @@ class Engine:
         self.clients: set = set()
         self.running = False
         self._reset()
+        # sensitivity (0–1) that corresponds to the saved default threshold
+        level0 = self.det.level(self.det.threshold)
+        self.sensitivity = float(min(1.0, max(0.0, (0.62 - level0) / 0.40)))
 
     def _reset(self):
         self.disp_idx = deque(maxlen=DISPLAY)
@@ -65,6 +69,7 @@ class Engine:
         self.score_ema = None     # smoothed score — flag on sustained stress
         self.label = 0
         self.bpm = None           # heart rate, human-readable context (not the flag)
+        self.quality = None       # 0–1 signal-quality estimate (context, not the flag)
 
     def _ingest(self):
         nidx, nbvp = [], []
@@ -90,6 +95,13 @@ class Engine:
             return None
         return estimate_heart_rate(np.asarray(tail, dtype=np.float32), fs=FS)
 
+    def _quality(self) -> float | None:
+        # signal-quality on a ~8 s tail — context for the UI, never gates the flag.
+        tail = list(self.infbuf)[-8 * FS:]
+        if len(tail) < 8 * FS:
+            return None
+        return round(signal_quality_score(np.asarray(tail, dtype=np.float32)), 3)
+
     def frame(self, nidx, nbvp):
         return {"type": "f", "running": self.running,
                 "elapsed": round(self.total / FS, 1),
@@ -98,6 +110,7 @@ class Engine:
                 "level": round(self.level, 3), "flag": self.flag,
                 "score": round(self.score, 5),
                 "bpm": round(self.bpm) if self.bpm else None,
+                "quality": self.quality,
                 "label": LABELS.get(self.label, "—")}
 
     async def broadcast(self, payload):
@@ -130,6 +143,7 @@ class Engine:
                     self.level = self.det.level(self.score)
                     self.flag = self.det.flag(self.score)
                     self.bpm = await loop.run_in_executor(None, self._heart_rate)
+                    self.quality = await loop.run_in_executor(None, self._quality)
                 await self.broadcast(self.frame(nidx, nbvp))
                 nxt += TICK_SEC
                 d = nxt - loop.time()
@@ -139,6 +153,23 @@ class Engine:
             else:
                 await asyncio.sleep(0.1)
                 nxt = loop.time() + TICK_SEC
+
+    def set_sensitivity(self, v: float) -> dict:
+        """tune the flag threshold from a 0–1 sensitivity (higher = flags more).
+
+        maps v to a display-level threshold with the SAME curve Pulse Watch uses
+        (so the two front-ends agree), converts that to the raw MSE threshold the
+        flag compares against, and re-flags the current score immediately. note:
+        the threshold is global to this engine (one model, all viewers share it).
+        """
+        v = float(min(1.0, max(0.0, v)))
+        level = min(0.85, max(0.12, 0.62 - 0.40 * v))     # match Pulse Watch setSens()
+        self.sensitivity = v
+        self.det.threshold = self.det.score_for_level(level)
+        if self.score_ema is not None:                    # instant feedback on the live score
+            self.level = self.det.level(self.score)
+            self.flag = self.det.flag(self.score)
+        return {"sensitivity": v, "thr_level": level, "threshold": self.det.threshold}
 
     def cmd(self, c):
         if c == "start":
@@ -172,8 +203,24 @@ app.mount("/vendor", StaticFiles(directory=VENDOR_DIR), name="vendor")
 
 
 @app.get("/")
-async def index():
+@app.get("/watch")
+async def watch():
+    # Zayed's Pulse Watch product UI — the default view, running live on this
+    # same pipeline + /ws. (/watch kept as an alias.)
+    return FileResponse(os.path.join(PULSE_DIR, "Pulse Watch.dc.html"))
+
+
+@app.get("/dev")
+async def dev():
+    # developer dashboard — model output vs ground truth + sensitivity, for tuning
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+
+@app.get("/support.js")
+async def watch_runtime():
+    # the .dc runtime that Pulse Watch.dc.html loads via ./support.js
+    return FileResponse(os.path.join(PULSE_DIR, "support.js"),
+                        media_type="application/javascript")
 
 
 @app.websocket("/ws")
@@ -186,10 +233,19 @@ async def ws_endpoint(ws: WebSocket):
             "type": "hello", "fs": FS, "win_s": WIN_LEN / FS,
             "disp": DISPLAY, "infer_s": INFER_EVERY / FS,
             "thr_level": round(thr_level, 3), "threshold": round(engine.det.threshold, 5),
-            "subject": engine.replay.subject, "running": engine.running}))
+            "subject": engine.replay.subject, "running": engine.running,
+            "source": "replay", "device_connected": False,
+            "sensitivity": round(engine.sensitivity, 3)}))
         while True:
             msg = json.loads(await ws.receive_text())
-            if "cmd" in msg:
+            if msg.get("cmd") == "set_sensitivity":
+                info = engine.set_sensitivity(msg.get("value", 0.5))
+                await engine.broadcast({
+                    "type": "thr",
+                    "threshold": round(info["threshold"], 5),
+                    "thr_level": round(info["thr_level"], 3),
+                    "sensitivity": round(info["sensitivity"], 3)})
+            elif "cmd" in msg:
                 engine.cmd(msg["cmd"])
                 await engine.broadcast({"type": "state", "running": engine.running})
     except WebSocketDisconnect:
