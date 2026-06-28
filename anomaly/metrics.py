@@ -57,6 +57,69 @@ def recall_at_specificity(y_true: np.ndarray, scores: np.ndarray,
     return float(np.mean(pos >= thr))
 
 
+def _runs(mask: np.ndarray):
+    """maximal [start, end) index ranges where a boolean array is True."""
+    runs, i, n = [], 0, len(mask)
+    while i < n:
+        if mask[i]:
+            j = i + 1
+            while j < n and mask[j]:
+                j += 1
+            runs.append((i, j)); i = j
+        else:
+            i += 1
+    return runs
+
+
+def episode_metrics(scores: np.ndarray, y_true: np.ndarray, step_sec: float = 5.0,
+                    spec: float = 0.90, k: int = 3) -> dict:
+    """episode-level detection on TIME-ORDERED windows (the product's-eye view).
+
+    a stress *episode* = a contiguous run of positive windows. it's *detected* only
+    if it contains a run of >= k consecutive flagged windows — "sustained", to mirror
+    the deployed debounce and kill the trivial 'any single window fires' inflation.
+    the flag threshold is the same 90%-specificity point as the window metric, so the
+    two are directly comparable.
+
+    recall and false-alarms are reported TOGETHER (each is meaningless alone — loosen
+    the rule and both rise):
+      • ep_recall  — fraction of stress episodes detected
+      • fa_per_hr  — sustained false-alarm events per hour of non-stress monitoring
+      • latency_s  — median seconds from episode onset to first sustained detection
+
+    NOTE: WESAD has ~one stress block per subject, so per-subject ep_recall is ~0/1 and
+    the across-subject mean reads as "fraction of subjects whose stress we caught".
+    """
+    y = np.asarray(y_true).astype(int)
+    s = np.asarray(scores, dtype=float)
+    neg, pos = s[y == 0], s[y == 1]
+    if len(pos) == 0 or len(neg) == 0:
+        return {"ep_recall": float("nan"), "fa_per_hr": float("nan"), "latency_s": float("nan")}
+
+    thr = np.quantile(neg, spec)
+    events = [(a, b) for (a, b) in _runs(s >= thr) if b - a >= k]   # sustained flags
+    episodes = _runs(y == 1)                                        # stress blocks
+
+    detected, latencies = 0, []
+    for ea, eb in episodes:
+        first = None
+        for a, b in events:
+            if a < eb and b > ea:                       # event overlaps this episode
+                f = max(a, ea)
+                first = f if first is None else min(first, f)
+        if first is not None:
+            detected += 1
+            latencies.append((first - ea) * step_sec)
+
+    fa = sum(1 for a, b in events if not np.any(y[a:b] == 1))       # events touching no stress
+    calm_hours = (len(neg) * step_sec) / 3600.0
+    return {
+        "ep_recall": float(detected / len(episodes)) if episodes else float("nan"),
+        "fa_per_hr": float(fa / calm_hours) if calm_hours > 0 else float("nan"),
+        "latency_s": float(np.median(latencies)) if latencies else float("nan"),
+    }
+
+
 def summarize(y_true: np.ndarray, scores: np.ndarray, spec: float = 0.90) -> dict:
     return {
         "pr_auc": pr_auc(y_true, scores),

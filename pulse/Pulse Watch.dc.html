@@ -840,10 +840,15 @@ class Component extends DCLogic {
     const ss=this.state.statusState, calib=(cv===this.calibRef.current);
     const rgb = calib?'45,190,158':(ss==='flagged'?'242,100,90':(ss==='caution'?'224,152,42':((ss==='paused'||ss==='offline'||ss==='poorSignal')?'174,185,198':'45,190,158')));
     const line='rgb('+rgb+')';
-    ctx.strokeStyle='#F1F5F9'; ctx.lineWidth=1; for(let i=1;i<4;i++){ const y=Math.round(h*i/4)+.5; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+    const padL=34;
+    ctx.strokeStyle='#F1F5F9'; ctx.lineWidth=1; for(let i=1;i<4;i++){ const y=Math.round(h*i/4)+.5; ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w,y); ctx.stroke(); }
     const d=this.wave, n=d.length; if(n<2) return;
     let mn=Infinity,mx=-Infinity; for(const v of d){ if(v<mn)mn=v; if(v>mx)mx=v; } if(mx-mn<0.01){mx=mn+1;}
-    const pad=12, ph=h-pad*2; const X=i=>(i/959)*w; const Y=v=>pad+ph-((v-mn)/(mx-mn))*ph; const s=960-n;
+    const pad=12, ph=h-pad*2; const X=i=>padL+(i/959)*(w-padL); const Y=v=>pad+ph-((v-mn)/(mx-mn))*ph; const s=960-n;
+    // y-axis amplitude ticks (BVP signal level)
+    ctx.fillStyle='#9AA6B2'; ctx.font='9px Plus Jakarta Sans, sans-serif'; ctx.textAlign='right'; ctx.textBaseline='middle';
+    [mx,(mn+mx)/2,mn].forEach(v=>{ ctx.fillText(Math.round(v), padL-5, Y(v)); });
+    ctx.textBaseline='alphabetic';
     const g=ctx.createLinearGradient(0,0,0,h); g.addColorStop(0,'rgba('+rgb+',.18)'); g.addColorStop(1,'rgba('+rgb+',0)');
     ctx.beginPath(); ctx.moveTo(X(s),Y(d[0])); for(let i=1;i<n;i++) ctx.lineTo(X(s+i),Y(d[i])); ctx.lineTo(X(959),h); ctx.lineTo(X(s),h); ctx.closePath(); ctx.fillStyle=g; ctx.fill();
     ctx.save(); ctx.shadowColor='rgba('+rgb+',.45)'; ctx.shadowBlur=8;
@@ -855,13 +860,17 @@ class Component extends DCLogic {
   }
   drawTrend(){
     const cv=this.trendRef.current; if(!cv) return; const {ctx,w,h}=this.prep(cv); ctx.clearRect(0,0,w,h);
-    const padL=4,padR=4,padT=10,padB=16; const pw=w-padL-padR, plot=h-padT-padB;
+    const padL=30,padR=6,padT=10,padB=16; const pw=w-padL-padR, plot=h-padT-padB;
     const Y=v=>padT+plot-Math.max(0,Math.min(1,v))*plot;
     const thr=this.state.thrLevel; const thrY=Y(thr);
     // tinted over-threshold band
     ctx.fillStyle='rgba(242,100,90,.07)'; ctx.fillRect(padL,padT,pw,thrY-padT);
     // gridlines
     ctx.strokeStyle='#EFF3F8'; ctx.lineWidth=1; [0,0.25,0.5,0.75,1].forEach(g=>{ const y=Math.round(Y(g))+.5; ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-padR,y); ctx.stroke(); });
+    // y-axis scale labels (deviation %)
+    ctx.fillStyle='#9AA6B2'; ctx.font='9px Plus Jakarta Sans, sans-serif'; ctx.textAlign='right'; ctx.textBaseline='middle';
+    [0,0.5,1].forEach(g=>{ ctx.fillText(Math.round(g*100)+'%', padL-5, Y(g)); });
+    ctx.textBaseline='alphabetic';
     // threshold dashed
     ctx.save(); ctx.setLineDash([5,4]); ctx.strokeStyle='#C0563C'; ctx.lineWidth=1.4; ctx.beginPath(); ctx.moveTo(padL,thrY); ctx.lineTo(w-padR,thrY); ctx.stroke(); ctx.restore();
     const H=this.levelHist; if(H.length>=2){

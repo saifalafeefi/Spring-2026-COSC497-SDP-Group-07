@@ -62,6 +62,30 @@ bottleneck) fixes it. sweeping the latent width (LOSO, 15 subjects, one harness 
 
 reproduce: `python3 -m anomaly.run --model ae --bottleneck 256 --ch-cap 32`
 
+## episode-level detection (what the product actually does)
+
+window recall (~0.55) scores every 60 s window in isolation. but stress is a *sustained
+episode*, and an early-warning device only has to flag it **once**. scoring episodes
+instead — detected = a run of **≥K consecutive flagged windows** at the 90%-spec
+threshold — turns K into a **recall ↔ false-alarm dial**. deployed bottleneck-256
+ch-cap32 model, LOSO across 15 subjects:
+
+| operating point | episode recall | false alarms / hr of calm | median time-to-flag |
+|---|---|---|---|
+| **sensitive (K=3)** | **1.00** (15/15) | 7.5 ± 3.1 | ~44 s |
+| **conservative (K=8)** | **0.87** (13/15) | **1.1 ± 1.9** | ~65 s |
+
+- at the sensitive point we **catch every subject's stress episode**; at the conservative
+  point we cut false alarms **~7×** (to ~1/hour) for the cost of missing 2 subjects.
+- the 2 missed subjects (S6, S13) are the **same near-chance cases** from the window
+  analysis (PR-AUC 0.28 / 0.51) — the domain-transfer hard tail, not a new failure.
+- recall and FA/h are reported **together on purpose** (loosen the rule and both rise),
+  and this is exactly the precision/recall knob the dashboard's sensitivity control
+  exposes. **K and the 90%-spec point are pre-committed** — not tuned to flatter a number.
+- further FA/h cuts (future work): signal-quality gating that rejects noisy windows (S3),
+  and per-user calibration on the wearer's own calm.
+- reproduce: `python3 -m anomaly.run --model ae --bottleneck 256 --ch-cap 32 [--episode-k 8]`
+
 ## the real finding: subject variance
 
 per-subject PR-AUC ranges from near-perfect to near-chance (e.g. autoencoder:
@@ -103,7 +127,7 @@ cost of compression, pooled calm-vs-stress windows (3,342 calm / 1,814 stress):
 
 | model | PR-AUC | recall@90% | size | CPU latency / window |
 |---|---|---|---|---|
-| keras float32 (reference) | 0.903 | 0.820 | 46.7 MB | — |
+| keras float32 (reference) | 0.903 | 0.820 | 45.7 MB | — |
 | TFLite float32 | 0.903 | 0.820 | 15.6 MB | 1.85 ms |
 | **TFLite int8** | 0.902 | 0.817 | **4.0 MB (4,122 KB)** | 1.49 ms |
 

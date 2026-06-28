@@ -19,7 +19,7 @@ import numpy as np
 
 from .wesad import load_subject, make_windows, SUBJECTS, WESAD_DIR
 from .splits import leave_one_subject_out
-from .metrics import summarize, aggregate
+from .metrics import summarize, aggregate, episode_metrics
 
 NORMAL = {1}        # baseline
 POSITIVE = {2}      # stress (TSST)
@@ -95,6 +95,9 @@ def main():
                          "0 = uncapped (original). pair with --blocks for an ESP32 model.")
     ap.add_argument("--max-subjects", type=int, default=0,
                     help="use only the first N subjects (quick checks)")
+    ap.add_argument("--episode-k", type=int, default=3, dest="episode_k", metavar="K",
+                    help="episode-level metric: a stress episode counts as detected only "
+                         "with >=K consecutive flagged windows (pre-committed, default 3).")
     args = ap.parse_args()
 
     subjects = SUBJECTS[: args.max_subjects] if args.max_subjects else SUBJECTS
@@ -111,17 +114,23 @@ def main():
         Xte, cte = data[test]
         yte = np.isin(cte, list(POSITIVE)).astype(int)
         det = make_detector(args, win_len).fit(Xtr)
-        m = summarize(yte, det.score(Xte))
+        sc = det.score(Xte)
+        m = summarize(yte, sc)
+        m.update(episode_metrics(sc, yte, step_sec=args.step, k=args.episode_k))
         m["subject"] = test
         rows.append(m)
         print(f"  {test:5s}  PR-AUC={m['pr_auc']:.3f}  "
               f"recall@90spec={m['recall@90spec']:.3f}  ROC-AUC={m['roc_auc']:.3f}  "
+              f"| ep={m['ep_recall']:.0f} fa/h={m['fa_per_hr']:.2f} lat={m['latency_s']:.0f}s  "
               f"(+{m['n_pos']}/-{m['n_neg']})")
 
     agg = aggregate(rows)
     print("\n=== mean ± std across subjects ===")
     for k, (mean, sd) in agg.items():
         print(f"  {k:14s} {mean:.3f} ± {sd:.3f}")
+    print(f"\n  episode-level (K={args.episode_k} sustained windows @ 90% spec): "
+          f"ep_recall = fraction of stress episodes caught · fa_per_hr = false alarms / "
+          f"hour of calm · latency_s = median time-to-flag")
 
 
 if __name__ == "__main__":
