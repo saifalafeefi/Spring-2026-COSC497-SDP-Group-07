@@ -21,6 +21,15 @@ env equivalents: SOURCE=device, DEVICE_PORT=..., SUBJECT=S16, PORT=8001.
 """
 from __future__ import annotations
 
+# Printed BEFORE the heavy imports below. numpy + scipy + tensorflow + a 4 MB
+# model take ~15-25 s to load, and without this the terminal sits blank the whole
+# time and looks hung — which invites a Ctrl-C mid-import.
+if __name__ == "__main__":
+    print("\n  starting… loading tensorflow + the 4 MB model.\n"
+          "  MEASURED: ~24 s for tensorflow, ~19 s for the model = about 45 s\n"
+          "  from a cold cache. This is not a hang — wait for the URL below.\n",
+          flush=True)
+
 import argparse
 import asyncio
 import json

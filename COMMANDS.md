@@ -29,6 +29,26 @@ dataset download: [Borealis Data](https://borealisdata.ca/dataset.xhtml?persiste
 the one-class stress detector on WESAD wrist BVP. the deployable model ships as
 `anomaly/saved/ae_int8.tflite` (4 MB), so the live dashboard runs **without** WESAD.
 
+### setup (once)
+
+```bash
+python3.12 -m venv ~/.venvs/sdp07          # NOT inside this repo - see below
+~/.venvs/sdp07/bin/pip install -r baselines/requirements.txt -r pipeline/requirements.txt
+```
+
+then prefix commands with `~/.venvs/sdp07/bin/python` (no `activate` needed).
+
+- **do not put the venv under `Documents/`.** if iCloud "Desktop & Documents"
+  sync is on, it tries to sync all ~1.7 GB / 30k files of it: `fileproviderd`
+  and `cloudkitd` peg the CPU and every import crawls (measured: `import numpy`
+  took **174 s** instead of 0.2 s). `.gitignore` does not stop iCloud.
+- **macOS Intel only:** `tensorflow-cpu` stops at 2.16.2 (no x86 wheels after
+  that), which forces `numpy<2` and needs `setuptools<81` — TF 2.16 imports
+  `distutils`, removed from the 3.12 stdlib, and setuptools 81 dropped the shim.
+  both constraints are already in `baselines/requirements.txt`. Apple Silicon
+  gets newer TF and is unaffected.
+- **python 3.12**, not 3.13 — there is no TF wheel for 3.13 on this platform.
+
 ### live dashboards
 
 ```bash
@@ -44,6 +64,12 @@ python3 -m anomaly.serve --source device      # REAL — MAX30102 over USB, auto
 python3 -m anomaly.serve --source device --device-port /dev/cu.usbmodem101
 ```
 
+- **one process owns the serial port.** stop `serve` / `device_check` (Ctrl-C) and
+  close the Arduino Serial Monitor BEFORE uploading. uploading while the server
+  is attached fails at the post-flash reset with `Serial data stream stopped:
+  Possible serial noise or corruption` — the flash itself usually succeeded, so
+  check with `device_check` before re-flashing. if the TFT comes back white,
+  power-cycle the USB (a RESET press does not re-power the display).
 - flash `sketch_aug3a/` first; it streams `D,t_ms,ir,red` at 25 Hz over USB while the
   TFT demo keeps running. `anomaly/device_source.py` band-passes it, strips the DC
   pedestal, and resamples to the 64 Hz the model's 3,840-sample window needs

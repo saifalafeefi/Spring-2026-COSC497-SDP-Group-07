@@ -83,13 +83,10 @@ const int SENSOR_SAMPLE_RATE = 100;
 const int SENSOR_AVERAGE     = 1;
 const int STREAM_FS          = SENSOR_SAMPLE_RATE / SENSOR_AVERAGE;   // 100 Hz nominal
 
-// MEASURED delivered rate, which is NOT the nominal above: the board sustains a
-// steady 40 Hz (`# stats hz=40.2`). The backlog back-correction in
-// readSampleTimed() multiplies by this, so a wrong value skews timestamps —
-// using the 10 ms nominal produced alternating 8 ms / 42 ms gaps instead of an
-// even ~25 ms. Update it if the stats line ever reports a different rate.
+// Measured delivered rate (`# stats hz=`), for reference only — nothing computes
+// timestamps from it any more. The host resampler reads the device's millis()
+// stamps directly and is rate-agnostic, so this staying stale cannot break it.
 const int DELIVERED_FS = 40;
-const uint32_t SAMPLE_PERIOD_MS = 1000 / DELIVERED_FS;                // 25 ms
 
 // The host gets every raw sample; the SpO2 buffer keeps one in SPO2_DECIMATE, so
 // the maxim algorithm still sees roughly the ~25 Hz it assumes.
@@ -142,19 +139,28 @@ uint32_t statLastReport = 0;
 // Stream helpers
 // =====================================================
 
-// Read one FIFO entry and return the time it was actually captured.
+// Read one FIFO entry and return its capture time.
 //
-// available() tells us how many entries are still queued behind this one; each
-// of those is SAMPLE_PERIOD_MS older than "now", so the head of the queue was
-// captured (backlog - 1) periods ago. Without this correction a slow display
-// frame makes a whole burst of samples share one timestamp.
+// This used to back-date the timestamp by (backlog - 1) * SAMPLE_PERIOD_MS to
+// compensate for reading a queued burst. That was wrong here and actively
+// harmful: the loop blocks on the sensor (measured ~25 ms of a ~25 ms period in
+// readSampleTimed), so samples are read as they arrive and the backlog is ~1.
+// With a backlog that is occasionally 2, the correction subtracted a full period
+// from samples that were NOT late, stretching device time to half of real time —
+// 562 samples spanning 14 s of wall clock reported themselves as 20.4 Hz.
+//
+// Downstream that is corrosive rather than merely inaccurate: the host builds its
+// 64 Hz grid from these timestamps, so a 2x stretch halves the apparent pulse
+// frequency and drops it onto the 0.7 Hz edge of the band-pass, where it is
+// attenuated into the noise floor.
+//
+// millis() at the moment of the read is simply correct.
 uint32_t readSampleTimed(uint32_t *red, uint32_t *ir) {
   while (!particleSensor.available()) {
     particleSensor.check();
     delay(1);
   }
 
-  uint16_t backlog = particleSensor.available();
   uint32_t now = millis();
 
   *red = particleSensor.getRed();
@@ -162,8 +168,7 @@ uint32_t readSampleTimed(uint32_t *red, uint32_t *ir) {
 
   particleSensor.nextSample();
 
-  uint32_t age = (backlog > 0) ? (uint32_t)(backlog - 1) * SAMPLE_PERIOD_MS : 0;
-  return (now > age) ? (now - age) : 0;
+  return now;
 }
 
 void streamSample(uint32_t timestamp, uint32_t ir, uint32_t red) {
