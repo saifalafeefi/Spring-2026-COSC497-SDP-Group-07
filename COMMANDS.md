@@ -36,6 +36,26 @@ python3 -m anomaly.serve                 # → http://localhost:8001
 python3 -m anomaly.serve --subject S17   # other clean demo subjects: S17, S7
 ```
 
+two data sources, same dashboard:
+
+```bash
+python3 -m anomaly.serve                      # DUMMY — WESAD replay loop (default)
+python3 -m anomaly.serve --source device      # REAL — MAX30102 over USB, auto-detect port
+python3 -m anomaly.serve --source device --device-port /dev/cu.usbmodem101
+```
+
+- flash `sketch_aug3a/` first; it streams `D,t_ms,ir,red` at 25 Hz over USB while the
+  TFT demo keeps running. `anomaly/device_source.py` band-passes it, strips the DC
+  pedestal, and resamples to the 64 Hz the model's 3,840-sample window needs
+- check the hardware **before** starting the server:
+  `python3 -m anomaly.device_source --list-ports` then `python3 -m anomaly.device_source`
+  (live self-test — no TensorFlow, no dashboard in the way)
+- real mode has no ground truth, so `/dev`'s TP/FP scorecard goes blank; the flag,
+  charts, HR and the board's own SpO2 all work. needs `pyserial`
+- ⚠️ the saved threshold in `scorer.npz` was calibrated on WESAD wrist BVP, not on
+  fingertip MAX30102 — the waveform is live and correct, but the stress flag is not
+  meaningful on real hardware until it is recalibrated on your own calm baseline
+
 - `/` (alias `/watch`) — **Pulse Watch** product UI (default view)
 - `/dev` — developer dashboard: model flag vs WESAD ground truth (TP/FP/FN/TN +
   precision/recall), true-stress band, and the **sensitivity slider**

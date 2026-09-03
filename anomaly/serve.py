@@ -1,10 +1,23 @@
-"""live anomaly dashboard — the trained autoencoder running on a WESAD BVP stream.
+"""live anomaly dashboard — the trained autoencoder over a 64 Hz BVP stream.
 
-streams wrist BVP, runs the saved model on a rolling 60 s window, and pushes the
-anomaly level + stress flag to the browser over a WebSocket (uPlot front-end).
+runs the saved model on a rolling 60 s window and pushes the anomaly level +
+stress flag to the browser over a WebSocket (uPlot front-end).
 
-    python3 -m anomaly.serve                 # → http://localhost:8001
-    python3 -m anomaly.serve --subject S16
+two interchangeable sources feed it:
+
+  • **replay** (default) — a curated calm→stress WESAD loop. no hardware needed;
+    this is the demo mode, and it still carries ground-truth labels so `/dev`
+    can score the model against them.
+  • **device** — the real ESP32-S3 + MAX30102 over USB serial, conditioned to
+    64 Hz band-passed BVP by `device_source.DeviceSource`. no ground truth, so
+    `/dev`'s scorecard goes blank; everything else works the same.
+
+    python3 -m anomaly.serve                       # replay (dummy data)
+    python3 -m anomaly.serve --subject S16         # replay, another subject
+    python3 -m anomaly.serve --source device       # REAL sensor, auto-detect port
+    python3 -m anomaly.serve --source device --device-port /dev/cu.usbmodem101
+
+env equivalents: SOURCE=device, DEVICE_PORT=..., SUBJECT=S16, PORT=8001.
 """
 from __future__ import annotations
 
@@ -46,10 +59,20 @@ SUBJECT = os.environ.get("SUBJECT", "S5")
 
 
 class Engine:
-    def __init__(self, subject: str):
+    def __init__(self, mode: str = "replay", subject: str = SUBJECT,
+                 device_port: str | None = None, baud: int = 115200,
+                 invert: bool = False):
         self.det = LiveAnomalyDetector()
-        self.replay = BVPReplay(subject)
-        self.stream = self.replay.stream()
+        self.mode = mode
+        if mode == "device":
+            from .device_source import DeviceSource
+            self.source = DeviceSource(port=device_port, baud=baud,
+                                       invert=invert).start()
+            self.subject = "device"
+        else:
+            self.source = BVPReplay(subject)
+            self.subject = subject
+        self.stream = self.source.stream()
         self.clients: set = set()
         self.running = False
         self._reset()
@@ -70,11 +93,22 @@ class Engine:
         self.label = 0
         self.bpm = None           # heart rate, human-readable context (not the flag)
         self.quality = None       # 0–1 signal-quality estimate (context, not the flag)
+        self.spo2 = None          # device-reported only; the replay has no RED channel
 
     def _ingest(self):
+        # the replay is infinite, so we set its pace. a real device paces itself:
+        # take only what has actually arrived (bounded, so a backlog drains fast)
+        # and never call next() past that — otherwise a slow or unplugged board
+        # would block the async producer.
+        n = SAMPLES_PER_TICK
+        if self.mode == "device":
+            n = min(self.source.available(), SAMPLES_PER_TICK * 4)
+
         nidx, nbvp = [], []
-        for _ in range(SAMPLES_PER_TICK):
-            v, lab = next(self.stream)
+        for _ in range(n):
+            v, lab = next(self.stream, (None, None))
+            if v is None:
+                break
             self.disp_idx.append(self.total)
             self.disp_bvp.append(round(v, 2))
             self.infbuf.append(v)
@@ -83,6 +117,14 @@ class Engine:
             self.since_infer += 1
             nidx.append(self.total)
             nbvp.append(round(v, 2))
+
+        if self.mode == "device":
+            # SpO2 is measured on the board, so surface it as soon as it arrives
+            # rather than gating it behind the model's 60 s warm-up. same for the
+            # board's own BPM, until our 64 Hz estimator has enough signal.
+            self.spo2 = self.source.device_spo2
+            if len(self.infbuf) < WIN_LEN:
+                self.bpm = self.source.device_bpm
         return nidx, nbvp
 
     def _infer(self) -> float:
@@ -93,7 +135,10 @@ class Engine:
         tail = list(self.infbuf)[-12 * FS:]
         if len(tail) < 8 * FS:
             return None
-        return estimate_heart_rate(np.asarray(tail, dtype=np.float32), fs=FS)
+        bpm = estimate_heart_rate(np.asarray(tail, dtype=np.float32), fs=FS)
+        if bpm is None and self.mode == "device":
+            bpm = self.source.device_bpm      # the sketch's own maxim estimate
+        return bpm
 
     def _quality(self) -> float | None:
         # signal-quality on a ~8 s tail — context for the UI, never gates the flag.
@@ -103,15 +148,21 @@ class Engine:
         return round(signal_quality_score(np.asarray(tail, dtype=np.float32)), 3)
 
     def frame(self, nidx, nbvp):
-        return {"type": "f", "running": self.running,
-                "elapsed": round(self.total / FS, 1),
-                "buf": len(self.infbuf), "win": WIN_LEN,
-                "idx": nidx, "bvp": nbvp,
-                "level": round(self.level, 3), "flag": self.flag,
-                "score": round(self.score, 5),
-                "bpm": round(self.bpm) if self.bpm else None,
-                "quality": self.quality,
-                "label": LABELS.get(self.label, "—")}
+        f = {"type": "f", "running": self.running,
+             "elapsed": round(self.total / FS, 1),
+             "buf": len(self.infbuf), "win": WIN_LEN,
+             "idx": nidx, "bvp": nbvp,
+             "level": round(self.level, 3), "flag": self.flag,
+             "score": round(self.score, 5),
+             "bpm": round(self.bpm) if self.bpm else None,
+             "spo2": self.spo2,
+             "quality": self.quality,
+             "label": LABELS.get(self.label, "—")}
+        if self.mode == "device":
+            st = self.source.status()
+            f["device"] = {"connected": st["connected"], "port": st["port"],
+                           "contact": st["contact"], "dropped": st["dropped"]}
+        return f
 
     async def broadcast(self, payload):
         if not self.clients:
@@ -178,8 +229,9 @@ class Engine:
             self.running = False
         elif c == "reset":
             self.running = False
-            self.stream = self.replay.stream()
-            self._reset()
+            if self.mode == "replay":
+                self.stream = self.source.stream()   # rewind the loop
+            self._reset()                            # device: just clear buffers
 
 
 engine: Engine | None = None
@@ -229,12 +281,15 @@ async def ws_endpoint(ws: WebSocket):
     engine.clients.add(ws)
     try:
         thr_level = engine.det.level(engine.det.threshold)
+        dev = engine.source.status() if engine.mode == "device" else None
         await ws.send_text(json.dumps({
             "type": "hello", "fs": FS, "win_s": WIN_LEN / FS,
             "disp": DISPLAY, "infer_s": INFER_EVERY / FS,
             "thr_level": round(thr_level, 3), "threshold": round(engine.det.threshold, 5),
-            "subject": engine.replay.subject, "running": engine.running,
-            "source": "replay", "device_connected": False,
+            "subject": engine.subject, "running": engine.running,
+            "source": engine.mode,
+            "device_connected": bool(dev and dev["connected"]),
+            "device_port": dev["port"] if dev else None,
             "sensitivity": round(engine.sensitivity, 3)}))
         while True:
             msg = json.loads(await ws.receive_text())
@@ -255,17 +310,50 @@ async def ws_endpoint(ws: WebSocket):
 
 
 def main():
-    global engine, SUBJECT
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--subject", default=SUBJECT)
-    ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8001")))
+    global engine
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--source", choices=("replay", "device"),
+                    default=os.environ.get("SOURCE", "replay"),
+                    help="replay = WESAD demo loop (default); device = real MAX30102")
+    ap.add_argument("--subject", default=SUBJECT, help="replay subject")
+    ap.add_argument("--device-port", default=os.environ.get("DEVICE_PORT"),
+                    help="serial port of the board (default: auto-detect)")
+    ap.add_argument("--baud", type=int, default=115200)
+    ap.add_argument("--invert", action="store_true",
+                    help="flip the device waveform if the pulse reads upside-down")
+    ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8001")),
+                    help="HTTP port for the dashboard")
     args = ap.parse_args()
-    print(f"  loading model + subject {args.subject}…")
-    engine = Engine(args.subject)
+
+    if args.source == "device":
+        print("  source: REAL sensor (MAX30102 over serial)")
+    else:
+        print(f"  source: replay — WESAD {args.subject} (dummy data)")
+    print("  loading model…")
+    engine = Engine(mode=args.source, subject=args.subject,
+                    device_port=args.device_port, baud=args.baud,
+                    invert=args.invert)
+    if args.source == "device":
+        import time as _t
+        deadline = _t.monotonic() + 3.0          # give the reader a moment to latch on
+        while _t.monotonic() < deadline and not engine.source.status()["connected"]:
+            _t.sleep(0.2)
+        st = engine.source.status()
+        if st["connected"]:
+            print(f"  serial: streaming from {st['port']}")
+        else:
+            why = st["error"] or "no data yet"
+            print(f"  serial: not streaming ({why}) — the reader keeps retrying, "
+                  "so the dashboard starts either way")
+            print("          list ports with: python3 -m anomaly.device_source --list-ports")
     print(f"\n  anomaly dashboard → http://localhost:{args.port}"
           f"   (LAN: http://<this-device-ip>:{args.port})\n")
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="warning")
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="warning")
+    finally:
+        if args.source == "device":
+            engine.source.close()
 
 
 if __name__ == "__main__":
