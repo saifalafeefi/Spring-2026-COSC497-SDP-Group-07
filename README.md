@@ -40,9 +40,10 @@ sensor → preprocess → quality check → features → anomaly model → alert
 HR·SpO₂·accel   filter·resample   artifact reject   extract/embed   autoencoder (+SSL)   dashboard flag
 ```
 
-signal-quality assessment is a first-class stage, not an afterthought. the edge
-target is a **Raspberry Pi** (the guaranteed "runs on device" deliverable);
-ESP32-S3 TinyML is the stretch.
+signal-quality assessment is a first-class stage, not an afterthought — it is
+implemented for the live sensor (`device_source.py` filters, `device_check.py` gates).
+the edge target is a **Raspberry Pi** (the guaranteed "runs on device" deliverable);
+ESP32-S3 TinyML is the stretch, though the ESP32-S3 is what currently streams live.
 
 ## status
 
@@ -58,6 +59,25 @@ model's flag against ground truth live, both with a tunable sensitivity control.
 earlier supervised cardiac model is kept as prior work; the streaming/dashboard
 skeleton in `pipeline/` carries over.
 
+**it now runs on real hardware.** an ESP32-S3 + MAX30102 streams over USB serial;
+`anomaly/device_source.py` band-passes and resamples it to the same 64 Hz the model
+expects, so `python3 -m anomaly.serve --source device` swaps the WESAD replay for a
+live finger without touching the model. the board's own display mirrors the
+dashboard's heart rate, and falls back to its own estimate when untethered.
+
+**the flag is calibrated on our own sensor.** `scorer.npz` holds WESAD *wrist*
+thresholds; this rig is a *fingertip* sensor, so those thresholds meant nothing here.
+`anomaly/device_calibrate.py` — or the dashboard's Calibrate button, which applies
+the result live — records the user's own calm, gates it, and re-derives the
+threshold on it. **the transfer delta on our rig: our calm median (0.282) scores
+above the WESAD threshold (0.212), so a zero-shot wrist model flags essentially
+100% of our calm; device-calibrated that is 10% by construction.** measured on one
+subject, calm only.
+
+**not yet shown:** that the flag *rises under stress* on this hardware. everything
+above establishes what calm looks like. the induced-proxy test is the next step and
+the thing that would validate or sink the transfer claim.
+
 | Document | What it covers |
 |---|---|
 | [`anomaly/README.md`](anomaly/README.md) | one-class detector + eval harness + live dashboard |
@@ -70,9 +90,11 @@ skeleton in `pipeline/` carries over.
 tick as we go. `[x]` = done.
 
 **S1 · Mohamed — sensing & edge (O3, O7)**
+- [x] ESP32-S3 + MAX30102 rig streaming live to the dashboard (band-passed, resampled to 64 Hz)
+- [x] on-device heart rate: replaced the library estimate (assumed 25 Hz, swung 28–150 bpm) with a millis()-based detector; board and dashboard now agree within 1–2 bpm
 - [ ] assemble the Pi sensor rig (MAX30102 + accelerometer)
-- [ ] validate: resting HR within ±5 bpm of reference, 5-min recording, ≥3 people
-- [ ] accelerometer logging working
+- [ ] validate: resting HR within ±5 bpm of **a reference oximeter**, 5-min recording, ≥3 people
+- [ ] accelerometer logging working (no accelerometer on the rig yet)
 - [ ] (O7, with S2) run the compressed model on the Pi — full sensor→detect→alert loop
 
 **S2 · Saif — ML method (O1, O2)**
@@ -85,18 +107,30 @@ tick as we go. `[x]` = done.
 - [x] TFLite-compress to a 4 MB int8 model, 1.5 ms/window, fits the ESP32-S3 (→ O7 model ready)
 - [x] per-user calibration on WESAD: +0.12 PR-AUC, +0.23 recall (→ O6 method ready)
 - [x] tunable-sensitivity control: slider + watch preset → server retunes the flag threshold (O4, with S4)
+- [x] device calibration: record our own calm on the real sensor, re-derive the flag threshold, apply it live (CLI + dashboard button)
+- [x] transfer delta measured on our own hardware (see status) — O6 is no longer WESAD-only
+- [ ] show the flag responds to induced stress on this rig (calm-only so far)
 - [ ] (optional) exertion model on PPG-DaLiA
 
 **S3 · Khalfan — signal processing (O1)**
-- [ ] band-pass / filtering stage
-- [ ] artifact rejection
-- [ ] signal-quality index that gates windows before the model
-- [ ] wire the quality stage into the harness + dashboard
+
+built on the device path already (`anomaly/device_source.py`, `anomaly/device_check.py`)
+— reuse rather than rewrite; what is missing is the WESAD-harness side.
+
+- [x] band-pass / filtering stage (0.7–3 Hz causal `sosfilt`, primed to avoid startup ringing)
+- [x] artifact rejection (contact loss, drift, spikes, perfusion)
+- [x] signal-quality index that gates windows before the model — adaptive: it tunes to
+      the session's own signal, because fixed thresholds from one rig rejected 100% of
+      another's windows
+- [ ] wire the quality stage into the WESAD harness
 
 **S4 · Zayed — dashboard & integration (O4)**
 - [x] live dashboard: stream → anomaly score → threshold flag → alert + event log
 - [x] tunable sensitivity/precision slider (with S2)
 - [x] Pulse Watch product UI integrated on the live pipeline (live Patients + History)
+- [x] Calibrate is a real backend session (progress, gate, commit) instead of a mock ramp
+- [x] with no finger on the sensor: HR, SpO₂, quality, level and flag blank instead of
+      reporting noise, and the waveform holds its scale so noise draws flat
 - [ ] end-to-end demo glue
 - [ ] M2 device demo
 
@@ -107,17 +141,28 @@ tick as we go. `[x]` = done.
 - [ ] (O6, with S2) evaluate induced proxies on device data; report the transfer delta
 
 **milestones**
-- [ ] M1 — method beats baseline ✅ · rig validated ❌ (half done)
+- [ ] M1 — method beats baseline ✅ · rig streaming live ✅ · rig validated against a reference ❌
 - [ ] M2 — full demo running on the device
 
 ## quick start
 
+**use a virtualenv, on Python 3.12.** `baselines/requirements.txt` pins
+`tensorflow-cpu<2.20`, which has no wheels for 3.13 or 3.14 — on a newer
+interpreter pip simply fails to resolve tensorflow. keep the venv outside the repo
+and outside any synced folder (iCloud/OneDrive). full setup in
+[`COMMANDS.md`](COMMANDS.md).
+
 ```bash
 # install dependencies (one-time)
-pip3 install -r baselines/requirements.txt -r pipeline/requirements.txt
+python3.12 -m venv ~/.venvs/sdp07
+~/.venvs/sdp07/bin/python -m pip install -r baselines/requirements.txt -r pipeline/requirements.txt
 
 # live dashboards — the int8 model ships in anomaly/saved/, so this runs without WESAD
 python3 -m anomaly.serve          # → http://localhost:8001  ( / Pulse Watch · /dev developer )
+
+# the same dashboard on the real sensor (ESP32-S3 + MAX30102 over USB)
+python3 -m anomaly.device_check           # grip coach: contact, perfusion, drift, quality
+python3 -m anomaly.serve --source device  # then hit Calibrate in the UI to set your baseline
 
 # evaluate the detectors on WESAD (needs WESAD downloaded; leave-one-subject-out)
 python3 -m anomaly.run --model ae --bottleneck 256 --ch-cap 32   # baseline | ae | ssl
@@ -153,6 +198,9 @@ anomaly/                             one-class anomaly detector (current directi
   compress.py                        TFLite int8 + compression cost (O7)
   export.py / infer.py               train+save / load the deployable model
   serve.py + static/                 live dashboard (FastAPI + WebSocket + uPlot)
+  device_source.py                   ESP32-S3 + MAX30102 serial reader → band-pass → 64 Hz
+  device_check.py                    grip coach + the shared signal-quality gate
+  device_calibrate.py                record our own calm, re-derive the flag threshold (O6)
   make_plots.py                      result figures (fig1–4)
   saved/                             deployed int8 model (ae_int8.tflite + scorer.npz; keras gitignored)
   RESULTS.md                         model results
@@ -172,6 +220,8 @@ pipeline/                            real-time streaming + dashboard (carries ov
   pipeline.py / run_cli.py
   make_demo_data.py / demo_data.csv  92 s of curated PPG (ships with repo)
   SENSORS_SETUP.md                   Pi + sensor swap guide
+sketch_aug3a/                        ESP32-S3 firmware: streams IR/RED + vitals, TFT display
+  sketch_aug3a.ino                   time-based HR detector; mirrors the dashboard's HR when connected
 pulse/                               Pulse Watch product UI (Zayed) — served at / by anomaly/serve.py
   Pulse Watch.dc.html / support.js   design-tool export; speaks serve.py's /ws protocol
 WESAD/ · Code & Data/                datasets (not in git)
