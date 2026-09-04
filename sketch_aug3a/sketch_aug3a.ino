@@ -108,6 +108,36 @@ int8_t validSpo2 = 0;
 int32_t heartRate = 0;
 int8_t validHeartRate = 0;
 
+// Heart rate measured in TIME (see updateHeartRate below). Declared here because
+// streamVitals() reports it long before that function appears in the file.
+const int HR_BEATS = 8;             // intervals kept for the median
+const uint32_t HR_MIN_MS = 300;     // refractory: 200 bpm ceiling
+const uint32_t HR_MAX_MS = 2000;    // 30 bpm floor
+
+float hrBaseline = 0.0f;            // slow DC follower
+float hrEnvelope = 0.0f;            // typical AC magnitude
+bool hrArmed = false;               // inside a beat, waiting to re-arm
+uint32_t hrLastBeatMs = 0;
+uint32_t hrIntervals[HR_BEATS];
+int hrCount = 0;
+int hrIdx = 0;
+
+int32_t bpmLive = 0;
+int8_t bpmValid = 0;
+
+// Heart rate pushed back from the dashboard. It measures on a band-passed 64 Hz
+// stream over a 12 s window -- longer and cleaner than anything the board can
+// hold -- so when it is connected its value is the better one and the screen
+// shows it, which also means the two displays cannot disagree. If the host goes
+// quiet the board reverts to its own bpmLive within HOST_BPM_TTL: this device
+// has to keep working untethered, so the link is an improvement, not a crutch.
+const uint32_t HOST_BPM_TTL = 5000;   // ms before a host value is considered stale
+int32_t hostBpm = 0;
+uint32_t hostBpmMs = 0;
+char rxLine[16];
+uint8_t rxLen = 0;
+
+
 // =====================================================
 // Graph area
 // =====================================================
@@ -190,14 +220,14 @@ void streamVitals() {
 #if STREAM_ENABLED
   char line[64];
   int n = snprintf(line, sizeof(line), "V,%lu,%ld,%d,%ld,%d\n",
-                   (unsigned long)millis(), (long)heartRate, (int)validHeartRate,
+                   (unsigned long)millis(), (long)bpmLive, (int)bpmValid,
                    (long)spo2, (int)validSpo2);
   Serial.write((const uint8_t *)line, n);
 #else
   Serial.print("Heart rate: ");
-  Serial.print(heartRate);
+  Serial.print(bpmLive);
   Serial.print(" BPM, valid: ");
-  Serial.print(validHeartRate);
+  Serial.print(bpmValid);
 
   Serial.print(" | SpO2: ");
   Serial.print(spo2);
@@ -336,6 +366,96 @@ void drawInterface() {
 }
 
 // =====================================================
+// Receive the host's heart rate  ("H,<bpm>\n")
+// =====================================================
+void pollHostSerial() {
+  while (Serial.available() > 0) {
+    char c = (char)Serial.read();
+    if (c == '\n' || c == '\r') {
+      rxLine[rxLen] = '\0';
+      if (rxLen > 2 && rxLine[0] == 'H' && rxLine[1] == ',') {
+        int v = atoi(&rxLine[2]);
+        if (v > 25 && v < 240) {
+          hostBpm = v;
+          hostBpmMs = millis();
+        }
+      }
+      rxLen = 0;
+    } else if (rxLen < sizeof(rxLine) - 1) {
+      rxLine[rxLen++] = c;
+    } else {
+      rxLen = 0;                    // overlong garbage: resync on next newline
+    }
+  }
+}
+
+// =====================================================
+// Heart rate, measured in TIME rather than in samples
+// =====================================================
+// Beats are timed with millis(), so nothing here depends on the sample rate and
+// it cannot fall out of tune when the delivered rate drifts or SPO2_DECIMATE is
+// retuned. Same principle the host uses on its 64 Hz stream, which is why the
+// two agree.
+void hrReset() {
+  hrBaseline = 0.0f; hrEnvelope = 0.0f; hrArmed = false;
+  hrLastBeatMs = 0; hrCount = 0; hrIdx = 0;
+  bpmLive = 0; bpmValid = 0;
+}
+
+void updateHeartRate(uint32_t ir, uint32_t nowMs) {
+  if (ir < 50000) {                 // no finger: nothing to time
+    hrReset();
+    return;
+  }
+  float v = (float)ir;
+  if (hrBaseline == 0.0f) { hrBaseline = v; hrEnvelope = 0.0f; }
+
+  hrBaseline += (v - hrBaseline) * 0.02f;
+  float ac = v - hrBaseline;
+  hrEnvelope += (fabsf(ac) - hrEnvelope) * 0.02f;
+
+  float thresh = hrEnvelope * 0.6f;
+  if (thresh < 20.0f) return;       // envelope not established yet
+
+  if (!hrArmed && ac > thresh) {
+    uint32_t dt = nowMs - hrLastBeatMs;
+    // A real refractory. Inside HR_MIN_MS this crossing is a noise spike riding
+    // on the upstroke, not a new beat. Returning here (rather than falling
+    // through) leaves hrLastBeatMs untouched: the earlier version reset the beat
+    // clock to the spike, so the NEXT genuine beat was timed from the wrong
+    // instant. Measured at 25% sample noise that read 109 bpm for a true 85.
+    if (hrLastBeatMs != 0 && dt < HR_MIN_MS) {
+      return;
+    }
+    hrArmed = true;
+    if (hrLastBeatMs != 0 && dt <= HR_MAX_MS) {
+      hrIntervals[hrIdx] = dt;
+      hrIdx = (hrIdx + 1) % HR_BEATS;
+      if (hrCount < HR_BEATS) hrCount++;
+
+      if (hrCount >= 4) {           // median of recent intervals rejects outliers
+        uint32_t tmp[HR_BEATS];
+        for (int i = 0; i < hrCount; i++) tmp[i] = hrIntervals[i];
+        for (int i = 1; i < hrCount; i++) {
+          uint32_t key = tmp[i];
+          int j = i - 1;
+          while (j >= 0 && tmp[j] > key) { tmp[j + 1] = tmp[j]; j--; }
+          tmp[j + 1] = key;
+        }
+        uint32_t med = tmp[hrCount / 2];
+        if (med > 0) {
+          bpmLive = (int32_t)(60000.0f / (float)med + 0.5f);
+          bpmValid = (bpmLive > 25 && bpmLive < 240) ? 1 : 0;
+        }
+      }
+    }
+    hrLastBeatMs = nowMs;
+  } else if (hrArmed && ac < thresh * 0.4f) {
+    hrArmed = false;                // hysteresis: re-arm on the falling edge
+  }
+}
+
+// =====================================================
 // Update BPM and SpO2 values
 // =====================================================
 void updateNumbers() {
@@ -344,10 +464,14 @@ void updateNumbers() {
 
   tft.setTextSize(3);
 
-  if (validHeartRate && heartRate > 25 && heartRate < 240) {
+  bool hostFresh = (hostBpm > 0 && (millis() - hostBpmMs) < HOST_BPM_TTL);
+  int32_t showBpm = hostFresh ? hostBpm : bpmLive;
+  bool showValid = hostFresh ? true : (bpmValid != 0);
+
+  if (showValid) {
     tft.setTextColor(ILI9341_GREEN);
     tft.setCursor(165, 40);
-    tft.print(heartRate);
+    tft.print(showBpm);
 
     tft.setTextSize(1);
     tft.print(" BPM");
@@ -481,6 +605,8 @@ void readInitialSamples() {
       // Stream the warm-up block too — the host wants an unbroken record from
       // boot, not a 4 s hole before the first calculateReadings().
       streamSample(timestamp, ir, red);
+      updateHeartRate(ir, timestamp);
+      pollHostSerial();
 
       if (k == SPO2_DECIMATE - 1) {     // keep the last of each group
         redBuffer[i] = red;
@@ -514,6 +640,13 @@ void calculateReadings() {
     &heartRate,
     &validHeartRate
   );
+
+  // The library's heartRate is DELIBERATELY IGNORED. It counts beats in SAMPLES
+  // against its hardcoded FreqS, and even after rescaling the output it swung
+  // 28-150 bpm on a steady 85 bpm pulse: its peak detection is tuned for a 25 Hz
+  // buffer and mis-counts on ours, catching dicrotic notches as beats. bpmLive
+  // below replaces it. SpO2 from this call is kept and is sound -- it is a
+  // red/IR amplitude ratio with no time term, so the sample rate never enters it.
 
   streamVitals();
 
@@ -654,6 +787,8 @@ void loop() {
       // Always stream, finger or not — the host decides what counts as contact
       // and needs the gaps to stay on a continuous timebase.
       streamSample(timestamp, ir, red);
+      updateHeartRate(ir, timestamp);
+      pollHostSerial();
       uint32_t t3 = micros();
 
       if (k == SPO2_DECIMATE - 1) {     // keep the last of each group

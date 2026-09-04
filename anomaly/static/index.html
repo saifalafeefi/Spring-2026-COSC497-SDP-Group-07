@@ -20,6 +20,7 @@
     padding:9px 14px;color:#fff;cursor:pointer;min-height:40px}
   #btnStart{background:var(--accent)} #btnPause{background:#5a6673} #btnReset{background:#3a4450}
   main{padding:14px;max-width:1000px;margin:0 auto}
+  .nocontact{opacity:.28;filter:grayscale(1)}
   .banner{padding:22px;border-radius:10px;text-align:center;font-weight:800;font-size:26px;
     color:#fff;background:#7f8c8d;transition:background .3s}
   .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:10px}
@@ -168,7 +169,7 @@ const lev={t:[],y:[],g:[]};  // g = ground-truth stress (0/1), shaded behind the
 const hr={t:[],y:[]};
 const LEVKEEP=180;            // ~3 min at 1 point/s
 let bvpChart=null, levChart=null, hrChart=null;
-let lastSec=-1, prevFlag=false, events=[];
+let lastSec=-1, prevFlag=false, events=[], noContactNow=false;
 let tp=0, fp=0, fn=0, tn=0;   // live AI-flag vs WESAD-truth scorecard
 
 const AXIS={stroke:"#8b98a5",grid:{stroke:"#2c3742",width:1},ticks:{stroke:"#2c3742"}};
@@ -191,7 +192,27 @@ function ensureCharts(){
       {stroke:"#c0392b",width:1,dash:[6,4],points:{show:false}}],200,[0,1],               // threshold
       "time (s)","anomaly level (0–1)"),[[0],[0],[0],[0]],l);
 }
-function drawBvp(){ if(bvpChart) bvpChart.setData([bvp.t,bvp.y]); }
+let refPtp=0;                 // amplitude of a real pulse, for a stable y-axis
+function drawBvp(){
+  if(!bvpChart) return;
+  // uPlot autoscales y to the visible data. with no finger that stretches a ~30 a.u.
+  // noise floor to fill the same panel as a ~765 a.u. pulse, which reads as a
+  // perfectly convincing heartbeat. hold the scale at the last real pulse instead:
+  // noise then draws as the flat line it is. tracks only while contact is good, and
+  // decays slowly so a genuinely weaker pulse still adapts.
+  const y=bvp.y;
+  if(y.length>2){
+    let mn=Infinity,mx=-Infinity;
+    for(const v of y){ if(v<mn)mn=v; if(v>mx)mx=v; }
+    const ptp=mx-mn;
+    if(!noContactNow && ptp>1) refPtp = refPtp ? Math.max(refPtp*0.995, ptp) : ptp;
+    if(refPtp && refPtp>ptp){
+      const mid=(mn+mx)/2;
+      bvpChart.setScale("y",{min:mid-refPtp/2, max:mid+refPtp/2});
+    }
+  }
+  bvpChart.setData([bvp.t,bvp.y]);
+}
 function drawHr(){ if(hrChart) hrChart.setData([hr.t,hr.y]); }
 function drawLev(){ if(levChart) levChart.setData([lev.t,lev.g,lev.y,lev.t.map(()=>THR)]); }
 function renderScore(){
@@ -252,7 +273,13 @@ function connect(){
     const m=JSON.parse(ev.data);
     if(m.type==="hello"){
       FS=m.fs; DISP=m.disp; THR=m.thr_level;
-      setText($("sub"),`subject ${m.subject} · ${m.fs} Hz · ${m.win_s}s window · re-scored every ${m.infer_s}s`);
+      // where the flag thresholds came from. on the real sensor an uncalibrated
+      // (WESAD wrist) scorer means the waveform is real but the flag is not.
+      const cal = m.source==="device"
+        ? (m.calibrated_on==="device" ? " · calibrated on THIS sensor"
+                                      : " · ⚠ flag NOT calibrated for this sensor (WESAD wrist)")
+        : "";
+      setText($("sub"),`subject ${m.subject} · ${m.fs} Hz · ${m.win_s}s window · re-scored every ${m.infer_s}s${cal}`);
       setText($("thrhint"),`flag threshold: level ${Math.round(THR*100)}%`);
       setText($("scorehint"),`threshold: ${m.threshold} MSE`);
       setText($("bufhint"),`window: ${m.win_s}s`);
@@ -290,19 +317,34 @@ function connect(){
     if(sec!==lastSec){
       lastSec=sec;
       setText($("m-el"), `${sec} s`);
-      setText($("m-bpm"), m.bpm ? `${m.bpm}` : "—");
-      if(m.bpm){
+      const noContact = m.device && !m.device.contact;
+      noContactNow = !!noContact;
+      // no finger = nothing to measure. the HR estimator will happily return a
+      // confident number from band-passed noise, so blank it and keep it out of
+      // the trend chart rather than logging a fiction.
+      setText($("m-bpm"), (!noContact && m.bpm) ? `${m.bpm}` : "—");
+      if(m.bpm && !noContact){
         hr.t.push(sec); hr.y.push(m.bpm);
         if(hr.t.length>LEVKEEP){ hr.t.shift(); hr.y.shift(); }
         drawHr();
       }
-      if(warming){
+      if(noContact){
+        // the stream never stops (a gap would break the 64 Hz timebase), so what
+        // the chart is drawing right now is autoscaled sensor noise, not a pulse.
+        $("banner").style.background="#8e6b1f";
+        setText($("banner"),"✋ no finger on the sensor — trace is noise, not a pulse");
+        setText($("m-level"),"—"); setText($("m-score"),"—");
+        setText($("m-flag"),"—"); setText($("m-verdict"),"—");
+        $("bvpChart").classList.add("nocontact");
+      }else if(warming){
+        $("bvpChart").classList.remove("nocontact");
         const left=Math.ceil((m.win-m.buf)/FS);
         $("banner").style.background="#5a6673";
         setText($("banner"),`warming up — ${left}s left (filling 60s window)`);
         setText($("m-level"),"—"); setText($("m-score"),"—");
         setText($("m-flag"),"—"); setText($("m-verdict"),"—");
       }else{
+        $("bvpChart").classList.remove("nocontact");
         setText($("m-level"), Math.round(m.level*100)+"%");
         setText($("m-score"), m.score.toFixed(5));
         $("levbar").style.width=(m.level*100)+"%";
@@ -330,7 +372,9 @@ function connect(){
       }
     }
     setText($("m-truth"), m.label);
-    setText($("m-qual"), (m.quality!=null) ? m.quality.toFixed(2) : "—");
+    // the quality index scores noise well (noise is amplitude-consistent), so
+    // it is actively misleading with no finger on the sensor.
+    setText($("m-qual"), (!noContactNow && m.quality!=null) ? m.quality.toFixed(2) : "—");
   };
 }
 connect();

@@ -681,7 +681,7 @@ class Component extends DCLogic {
   frame = (now)=>{
     if(!this.lastTs) this.lastTs=now;
     let dt=(now-this.lastTs)/1000; this.lastTs=now; if(dt>0.1) dt=0.1; if(dt<0) dt=0;
-    if(this.state.calibOpen){ this.stepCalib(dt); }
+    if(this.state.calibOpen && !this.state.useLive){ this.stepCalib(dt); }
     else if(this.state.running && !this.state.useLive){ this.stepSim(dt); }
     const _bpm=this.state.bpm||0;
     if(this.state.running && _bpm>0){ this.beatPhase=(this.beatPhase||0)+dt*(_bpm/60)*6.2832; const _bc=Math.floor(this.beatPhase/6.2832); if(this.beatMark==null){this.beatMark=_bc;} else if(_bc>this.beatMark){this.beatMark=_bc; this.beatEnv=1;} }
@@ -706,7 +706,8 @@ class Component extends DCLogic {
     this.cur={ level:scn.level, bpm:Math.round(scn.bpm), spo2:scn.spo2, motion:motion, q:q, buf:buf, win:this.state.win, elapsed:this.simClock, label:lab, flagProvided:false };
   }
 
-  qualityLabel(q){ return q>=0.8?'good':(q>=0.55?'fair':'poor'); }
+  qualityLabel(q){ if(q==null) return 'none';
+    return q>=0.8?'good':(q>=0.55?'fair':'poor'); }
 
   flushPaint(){
     const c=this.cur; if(!c){ return; }
@@ -746,6 +747,7 @@ class Component extends DCLogic {
     let status;
     if(this.state.useLive && !this.state.connected) status='offline';
     else if(!this.state.running) status='paused';
+    else if(c.noContact) status='noContact';
     else if(ql==='poor') status='poorSignal';
     else if(warming) status='warming';
     else if(flag) status='flagged';
@@ -795,16 +797,39 @@ class Component extends DCLogic {
     else if(m.type==='f'){
       if(Array.isArray(m.bvp)){ for(const v of m.bvp) this.wave.push(v); if(this.wave.length>960) this.wave.splice(0,this.wave.length-960); }
       const q = (m.quality!=null)?m.quality:0.9;
+      // with no finger there is nothing to measure: HR ran on noise and printed
+      // a confident 124 bpm, and the quality index scores noise well because
+      // noise is amplitude-consistent. blank them rather than assert them.
+      const nc = !!(m.device && m.device.contact===false);
       this.simClock=m.elapsed||this.simClock;
-      this.cur={ level:m.level??0, bpm:(m.bpm!=null?m.bpm:null), spo2:(m.spo2!=null?m.spo2:null), motion:(m.motion!=null?m.motion:0), q:q, buf:m.buf??this.state.win, win:m.win??this.state.win, elapsed:m.elapsed||0, label:m.label||'—', flagProvided:true, flag:!!m.flag };
+      this.cur={ level:m.level??0, bpm:(nc||m.bpm==null?null:m.bpm), spo2:(nc||m.spo2==null?null:m.spo2), motion:(m.motion!=null?m.motion:0), q:(nc?null:q), buf:m.buf??this.state.win, win:m.win??this.state.win, elapsed:m.elapsed||0, label:m.label||'—', flagProvided:true, flag:!!m.flag, noContact:nc };
       if(m.running!=null && m.running!==this.state.running) this.setState({running:m.running});
     } else if(m.type==='thr'){
       // sensitivity retuned on the server (here or from the dev dashboard) — sync the gauge
       const s=this.state; const patch={};
       if(m.thr_level!=null) patch.thrLevel=m.thr_level;
+      if(m.calibrated_on) patch.calibratedOn=m.calibrated_on;
       if(m.sensitivity!=null){ patch.sensitivity=m.sensitivity;
         patch.preset = m.sensitivity>=0.64?'Cautious':(m.sensitivity<=0.37?'Strict':'Balanced'); }
       this.setState(patch);
+    } else if(m.type==='calib'){
+      // real calibration progress from the device, replacing the mock ramp
+      // the modal renders prepare/record/done only. the server's 'learn' step is
+      // part of recording as far as the user is concerned, so map it to 'record'
+      // -- an earlier version left phase on 'learn', which matched no branch and
+      // rendered a dead panel that never advanced.
+      this.calib.phase = (m.phase==='done') ? 'done'
+                       : (m.phase==='cancelled') ? 'prepare' : 'record';
+      this.calib.learning = (m.phase==='learn');
+      this.calib.progress = m.progress!=null?m.progress:this.calib.progress;
+      this.calib.windows = m.windows||0;
+      this.calib.minWindows = m.min_windows||8;
+      this.calib.usable = m.usable!=null?m.usable:null;
+      this.calib.canCommit = !!m.can_commit;
+      this.calib.blocking = m.blocking||[];
+      this.calib.gate = m.gate||'';
+      if(m.phase==='done'){ this._personalized=true; this.setState({toast:'Calibrated on your own calm — '+(m.windows||0)+' windows'}); clearTimeout(this._tT); this._tT=setTimeout(()=>this.setState({toast:null}),4200); }
+      this.forceUpdate();
     } else if(m.type==='state'){ this.setState({running:!!m.running}); }
   }
 
@@ -818,7 +843,7 @@ class Component extends DCLogic {
     const warming=st.running&&st.buf<st.win;
     const lvl=warming?0:Math.max(0,Math.min(1,st.level||0));
     const thr=Math.max(0.001,Math.min(1,st.thrLevel));
-    const ss=st.statusState; const muted=(ss==='warming'||ss==='paused'||ss==='offline'||ss==='poorSignal');
+    const ss=st.statusState; const muted=(ss==='warming'||ss==='paused'||ss==='offline'||ss==='poorSignal'||ss==='noContact');
     const r2=lvl/thr; const col=muted?'#CBD4DF':(r2>=1?'#F2645A':(r2>=0.66?'#F4B740':'#2DBE9E'));
     ctx.lineCap='round';
     ctx.beginPath(); ctx.arc(cx,cy,r,A0,A1); ctx.strokeStyle='#EAEFF5'; ctx.lineWidth=13; ctx.stroke();
@@ -844,6 +869,18 @@ class Component extends DCLogic {
     ctx.strokeStyle='#F1F5F9'; ctx.lineWidth=1; for(let i=1;i<4;i++){ const y=Math.round(h*i/4)+.5; ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w,y); ctx.stroke(); }
     const d=this.wave, n=d.length; if(n<2) return;
     let mn=Infinity,mx=-Infinity; for(const v of d){ if(v<mn)mn=v; if(v>mx)mx=v; } if(mx-mn<0.01){mx=mn+1;}
+    // Lock the vertical scale to the amplitude of a REAL pulse. Autoscaling every
+    // frame stretched the no-finger noise floor (~30 a.u.) to fill the same panel
+    // as an actual pulse (~765 a.u.), so noise looked exactly like a heartbeat.
+    // The reference only tracks while contact is good, and decays slowly so a
+    // genuinely weaker pulse still adapts; with the finger off it is frozen, and
+    // the noise renders as the flat line it really is.
+    const liveOk = (ss!=='noContact' && ss!=='offline' && ss!=='paused');
+    const ptp = mx-mn;
+    if(liveOk && ptp>1){ this.refPtp = this.refPtp ? Math.max(this.refPtp*0.999, ptp) : ptp; }
+    if(this.refPtp && this.refPtp > ptp){
+      const mid=(mn+mx)/2; mn=mid-this.refPtp/2; mx=mid+this.refPtp/2;
+    }
     const pad=12, ph=h-pad*2; const X=i=>padL+(i/959)*(w-padL); const Y=v=>pad+ph-((v-mn)/(mx-mn))*ph; const s=960-n;
     // y-axis amplitude ticks (BVP signal level)
     ctx.fillStyle='#9AA6B2'; ctx.font='9px Plus Jakarta Sans, sans-serif'; ctx.textAlign='right'; ctx.textBaseline='middle';
@@ -904,9 +941,16 @@ class Component extends DCLogic {
   setSens(v,preset){ const thr=0.62-0.40*v; let p=preset; if(!p){ p = v>=0.64?'Cautious':(v<=0.37?'Strict':'Balanced'); } this.setState({sensitivity:v, preset:p, thrLevel:Math.max(0.12,Math.min(0.85,thr))}); if(this.state.useLive&&this.ws){ try{this.ws.send(JSON.stringify({cmd:'set_sensitivity',value:v}))}catch(e){} } }
   openCalib(){ this.calib={progress:0,phase:'prepare',q:0.95}; this.setState({calibOpen:true}); }
   closeCalib(){ this.setState({calibOpen:false}); }
-  calibStart(){ this.calib.phase='record'; this.calib.progress=0; this.forceUpdate(); }
-  calibCommit(){ this.calib.phase='done'; this._personalized=true; this.forceUpdate(); }
-  calibCancel(){ this.setState({calibOpen:false}); }
+  calibStart(){ this.calib.phase='record'; this.calib.progress=0;
+    if(this.state.useLive&&this.ws){ try{this.ws.send(JSON.stringify({cmd:'calib_start'}))}catch(e){} }
+    this.forceUpdate(); }
+  calibCommit(){
+    // live: the server writes the new scorer and re-flags immediately; the
+    // 'done' phase is confirmed by its calib message, not assumed here.
+    if(this.state.useLive&&this.ws){ try{this.ws.send(JSON.stringify({cmd:'calib_commit'}))}catch(e){} return; }
+    this.calib.phase='done'; this._personalized=true; this.forceUpdate(); }
+  calibCancel(){ if(this.state.useLive&&this.ws){ try{this.ws.send(JSON.stringify({cmd:'calib_cancel'}))}catch(e){} }
+    this.setState({calibOpen:false}); }
 
   openPatient(p){ this.setState({patientName:p.name, route:'monitor'}); }
   reviewAct(id, action){
@@ -1001,11 +1045,11 @@ class Component extends DCLogic {
     // gauge color escalate
     const r = thr>0?(st.level/thr):0;
     let gColor = r>=1?'#F2645A':(r>=0.66?'#F4B740':'#2DBE9E');
-    if(st.statusState==='poorSignal'||st.statusState==='warming'||st.statusState==='paused'||st.statusState==='offline') gColor='#C3CCD8';
+    if(st.statusState==='poorSignal'||st.statusState==='noContact'||st.statusState==='warming'||st.statusState==='paused'||st.statusState==='offline') gColor='#C3CCD8';
 
     const poor = st.qualityLabel==='poor';
     const ql=st.qualityLabel;
-    const qMap={good:{label:'Good',color:'#2BAE73',soft:'#E9F9F0'},fair:{label:'Fair',color:'#E0982A',soft:'#FEF6E6'},poor:{label:'Poor',color:'#7C8898',soft:'#EEF1F5'}};
+    const qMap={good:{label:'Good',color:'#2BAE73',soft:'#E9F9F0'},fair:{label:'Fair',color:'#E0982A',soft:'#FEF6E6'},poor:{label:'Poor',color:'#7C8898',soft:'#EEF1F5'},none:{label:'—',color:'#A6B0BD',soft:'#F2F5F8'}};
     const qc=qMap[ql]||qMap.good;
 
     const presets={Cautious:0.78,Balanced:0.5,Strict:0.24};
@@ -1030,7 +1074,7 @@ class Component extends DCLogic {
     const liveStatus = st.statusState==='flagged'?'flagged':(st.statusState==='warming'?'warming':'calm');
     const liveLast = liveStatus==='flagged' ? ('flagged '+(st.flagTimeStr||'now'))
                    : liveStatus==='warming' ? 'warming up'
-                   : (st.statusState==='paused'?'paused':(st.statusState==='offline'?'disconnected':'all calm'));
+                   : (st.statusState==='paused'?'paused':(st.statusState==='offline'?'disconnected':(st.statusState==='noContact'?'no finger on sensor':'all calm')));
     const livePatient = {id:'live', name:st.patientName, status:liveStatus,
       bpm:(st.bpm==null?null:st.bpm), last:liveLast, q:st.qualityLabel};
     const patientsVM=[livePatient].map(p=>{ const s=stPres[p.status]; return {id:p.id,name:p.name,initials:p.name.split(' ').map(x=>x[0]).join('').slice(0,2),statusWord:s.word,statusColor:s.color,statusSoft:s.soft,statusIcon:s.icon,bpm:p.bpm==null?'—':p.bpm,last:p.last,qColor:p.q==='good'?'#3DCB7F':(p.q==='fair'?'#F4B740':'#94A3B8'),isActive:true,onClick:()=>this.openPatient(p)}; });
@@ -1041,7 +1085,11 @@ class Component extends DCLogic {
     const needsCount=st.events.filter(e=>e.status==='needs').length;
 
     const cb=this.calib||{progress:0,phase:'prepare',q:0.95};
-    const cc=(cb.progress||0)>=1, cqok=(cb.q||0)>=0.8;
+    // live: the server decides when enough clean windows exist and reports how
+    // much of the session was usable; the mock ramp only applies offline.
+    const cLive = st.useLive;
+    const cc = cLive ? !!cb.canCommit : (cb.progress||0)>=1;
+    const cqok = cLive ? (cb.usable==null ? true : cb.usable>=0.8) : (cb.q||0)>=0.8;
     const calibVM={ phase:cb.phase, isPrepare:cb.phase==='prepare', isRecord:cb.phase==='record', isDone:cb.phase==='done',
       pct:Math.round((cb.progress||0)*100), pctCss:Math.round((cb.progress||0)*100)+'%',
       qOk:cqok, notQOk:!cqok, qLabel:cqok?'Good':'Weak', qColor:cqok?'#2BAE73':'#7C8898', qSoft:cqok?'#E9F9F0':'#EEF1F5',
@@ -1074,8 +1122,8 @@ class Component extends DCLogic {
       levelPct: (warming&&running)?'—':lvlPct+'%',
       gaugeWidth: ((warming&&running)?0:lvlPct)+'%', gaugeColor:gColor,
       thrLeft:(thr*100)+'%', thrPct:Math.round(thr*100)+'%',
-      gaugeCenterBig: (running&&warming) ? Math.max(0,Math.ceil((st.win-st.buf)/st.fs))+'s' : (st.statusState==='paused'?'—':(st.statusState==='offline'?'—':lvlPct+'%')),
-      gaugeCenterLabel: (running&&warming) ? 'warming up' : (st.statusState==='paused'?'paused':(st.statusState==='offline'?'offline':(st.statusState==='poorSignal'?'signal weak':'deviation'))),
+      gaugeCenterBig: (running&&warming) ? Math.max(0,Math.ceil((st.win-st.buf)/st.fs))+'s' : (st.statusState==='paused'?'—':(st.statusState==='offline'?'—':(st.statusState==='noContact'?'—':lvlPct+'%'))),
+      gaugeCenterLabel: (running&&warming) ? 'warming up' : (st.statusState==='paused'?'paused':(st.statusState==='offline'?'offline':(st.statusState==='noContact'?'no finger':(st.statusState==='poorSignal'?'signal weak':'deviation')))),
       heroBreathe: this.reduceMotion?'none':'breathe 6.5s ease-in-out infinite',
       // vitals
       vit:{ bpm: st.bpm==null?'—':st.bpm, spo2: st.spo2==null?'—':st.spo2, motion: st.motion<0.12?'Still':'Active', motionHint: st.motion<0.12?'at rest':'moving' },

@@ -42,10 +42,81 @@ DC_LOW, DC_GOOD_LO, DC_GOOD_HI, DC_SAT = 50_000, 80_000, 200_000, 240_000
 PI_WEAK, PI_GOOD = 0.3, 1.0        # perfusion index, percent
 DRIFT_OK, DRIFT_BAD = 0.05, 0.12   # DC wander as a fraction of DC
 
+# The RECORDING GATE, deliberately looser than the display verdicts above.
+# Those verdicts coach you toward an ideal grip; this decides whether a window is
+# usable. DC only has to prove the finger is on and the ADC is not railing —
+# perfusion index is the direct measure of how much pulse is reaching the sensor,
+# so 61k DC at 4% PI is a better trace than 116k DC at 1.8%, and gating on the DC
+# band as well was double-counting with the wrong measure in charge. The quality
+# bar is 0.60 because real PPG has sharp systolic peaks and scores lower on an
+# amplitude-consistency index than a smooth synthetic wave does.
+GATE_PI = 0.5          # percent -- the bottom of the healthy 0.5-5% range
+                       # documented above. 1.0 rejected the lower fifth of
+                       # normal human perfusion, which is not a defect.
+GATE_DRIFT = 0.08      # DC wander as a fraction of DC
+GATE_QUALITY = 0.60
+
 
 def bar(frac: float, width: int = 10) -> str:
     n = int(max(0.0, min(1.0, frac)) * width)
     return "#" * n + "." * (width - n)
+
+
+def contact_verdict(dc: float) -> tuple[str, str]:
+    """IR DC level -> (verdict, what to do about it)."""
+    if dc < DC_LOW:
+        return "NO FINGER", "rest a fingertip over the whole window"
+    if dc < DC_GOOD_LO:
+        return "LOOSE", "cover the sensor fully; a little more contact"
+    if dc > DC_SAT:
+        return "SATURATED", "too much light — ease off / lower ledBrightness"
+    if dc > DC_GOOD_HI:
+        return "HIGH", "slightly too much pressure"
+    return "GOOD", ""
+
+
+def assess(recent, dc: float, dc_hist, min_pi: float = GATE_PI,
+           max_drift: float = GATE_DRIFT, min_quality: float = GATE_QUALITY) -> dict:
+    """the numeric half of the grip check, with no printing.
+
+    `recent` is a short tail of conditioned BVP (~4 s), `dc` the current IR DC
+    level, `dc_hist` the recent DC history used for drift. shared with
+    `device_calibrate`, so "clean enough to record" means exactly one thing:
+    `ready` here is the same test that prints GOOD TO RECORD below.
+
+    `blocking` lists the gates that failed, so the UI can say why instead of
+    just "not clean enough"; `block_kind` is the first failure, for tallying.
+    """
+    recent = np.asarray(recent, dtype=np.float64)
+    if recent.size == 0:
+        return {"dc": dc, "pi": 0.0, "drift": 0.0, "spikes": 0, "quality": 0.0,
+                "contact": "NO FINGER", "contact_fix": "", "on_skin": False,
+                "ready": False, "blocking": ["no signal yet"], "block_kind": "contact"}
+    ac = float(recent.max() - recent.min())
+    pi = (ac / dc * 100.0) if dc > 0 else 0.0
+    sd = float(recent.std())
+    spikes = int(np.sum(np.abs(recent - recent.mean()) > 4 * sd)) if sd > 0 else 0
+    drift = (float(np.std(dc_hist)) / dc) if dc > 0 and len(dc_hist) > 4 else 0.0
+    q = float(signal_quality_score(recent))
+    verdict, fix = contact_verdict(dc)
+    on_skin = dc >= DC_LOW
+
+    blocking, kinds = [], []
+    if not on_skin:
+        blocking.append("no finger on the sensor"); kinds.append("contact")
+    elif dc > DC_SAT:
+        blocking.append(f"ADC saturated (IR {dc:,.0f})"); kinds.append("contact")
+    if pi < min_pi:
+        blocking.append(f"PI {pi:.2f}% < {min_pi:.2f}%"); kinds.append("pulse")
+    if drift > max_drift:
+        blocking.append(f"drift {drift*100:.1f}% > {max_drift*100:.0f}%"); kinds.append("motion")
+    if q < min_quality:
+        blocking.append(f"quality {q:.2f} < {min_quality:.2f}"); kinds.append("quality")
+
+    return {"dc": dc, "pi": pi, "drift": drift, "spikes": spikes, "quality": q,
+            "contact": verdict, "contact_fix": fix, "on_skin": on_skin,
+            "ready": not blocking, "blocking": blocking,
+            "block_kind": kinds[0] if kinds else ""}
 
 
 def main():
@@ -96,17 +167,13 @@ def main():
             else:
                 w = np.asarray(bvp, dtype=np.float64)
                 recent = w[-FS * 4:]
-                ac = float(recent.max() - recent.min())
-                pi = (ac / dc * 100.0) if dc > 0 else 0.0
-                sd = float(recent.std())
-                spikes = int(np.sum(np.abs(recent - recent.mean()) > 4 * sd)) if sd > 0 else 0
-                drift = (float(np.std(dc_hist)) / dc) if dc > 0 and len(dc_hist) > 4 else 0.0
-                q = signal_quality_score(recent)
+                a = assess(recent, dc, dc_hist)
+                pi, drift, spikes, q = a["pi"], a["drift"], a["spikes"], a["quality"]
 
                 # Everything below contact is meaningless without a finger: the
                 # band-passed noise floor still has a "quality" and a periodicity,
                 # and reporting those reads as confident nonsense. Gate them.
-                on_skin = dc >= DC_LOW
+                on_skin = a["on_skin"]
                 if on_skin:
                     hr = estimate_heart_rate(np.asarray(w[-FS * 12:], dtype=np.float32),
                                              fs=FS)
@@ -116,16 +183,7 @@ def main():
                     hr_hist.clear()
 
                 # ---- contact ----
-                if dc < DC_LOW:
-                    verdict, fix = "NO FINGER", "rest a fingertip over the whole window"
-                elif dc < DC_GOOD_LO:
-                    verdict, fix = "LOOSE", "cover the sensor fully; a little more contact"
-                elif dc > DC_SAT:
-                    verdict, fix = "SATURATED", "too much light — ease off / lower ledBrightness"
-                elif dc > DC_GOOD_HI:
-                    verdict, fix = "HIGH", "slightly too much pressure"
-                else:
-                    verdict, fix = "GOOD", ""
+                verdict, fix = a["contact"], a["contact_fix"]
                 lines.append(f"  contact   {bar(min(dc / DC_GOOD_HI, 1.0))}  "
                              f"IR {dc:>9,.0f}   {verdict:<10} {fix}")
 
@@ -180,12 +238,11 @@ def main():
 
                 hr_txt = f"{np.mean(hr_hist):.0f} bpm" if hr_hist else "—"
                 stab = (f"+/-{np.std(hr_hist):.0f}" if len(hr_hist) > 2 else "")
-                ready = (verdict == "GOOD" and pi >= PI_GOOD
-                         and drift <= DRIFT_OK and q >= 0.7)
+                ready = a["ready"]
                 lines.append("")
                 lines.append(f"  HR {hr_txt} {stab}        "
                              + ("*** GOOD TO RECORD ***" if ready
-                                else "not clean enough to record yet"))
+                                else "not ready: " + "; ".join(a["blocking"][:2])))
 
             if painted:
                 sys.stdout.write(f"\033[{painted}A")

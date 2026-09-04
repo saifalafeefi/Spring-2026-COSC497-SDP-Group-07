@@ -11,11 +11,52 @@ noted otherwise.
 # clone the repo (if you haven't)
 git clone <repo-url>
 cd Spring-2026-COSC497-SDP-Group-07
+```
 
-# install dependencies
-pip3 install -r baselines/requirements.txt
-pip3 install -r pipeline/requirements.txt
+**make a virtualenv first.** the deps are ~1 GB and version-pinned; installing
+them into the system Python fights with everything else on the machine.
 
+**Python 3.12 specifically.** `baselines/requirements.txt` pins
+`tensorflow-cpu<2.20`, and no TF below 2.20 ships wheels for 3.13 or 3.14 —
+on a newer interpreter pip simply fails to resolve tensorflow.
+
+macOS / Linux:
+
+```bash
+python3.12 -m venv ~/.venvs/sdp07
+~/.venvs/sdp07/bin/python -m pip install --upgrade pip
+~/.venvs/sdp07/bin/python -m pip install -r baselines/requirements.txt -r pipeline/requirements.txt
+```
+
+Windows (PowerShell):
+
+```powershell
+winget install --id Python.Python.3.12 -e     # only if `py -0p` doesn't list 3.12
+py -3.12 -m venv $HOME\.venvs\sdp07           # then open a NEW terminal
+$PY = "$HOME\.venvs\sdp07\Scripts\python.exe"
+& $PY -m pip install --upgrade pip
+& $PY -m pip install -r baselines\requirements.txt -r pipeline\requirements.txt
+```
+
+note the `&`: PowerShell parses a line that *starts* with `$HOME\...` as an
+expression, not a command, and fails with `Unexpected token`. the call operator
+`&` (with the path quoted, or held in `$PY`) is what runs it. `$PY` lives only
+in that terminal tab — re-set it in a new one.
+
+every `python3 -m ...` command below then runs as
+`~/.venvs/sdp07/bin/python -m ...` (macOS/Linux) or `& $PY -m ...` (Windows).
+
+- **don't `activate`** — spelling out the interpreter avoids shell aliases and
+  a stale `python3` pointing somewhere else
+- **keep the venv outside the repo and outside any synced folder** (iCloud,
+  OneDrive, Dropbox). a 1.7 GB venv under an iCloud-synced `~/Documents` made
+  `import numpy` take **174 s**; `.gitignore` does not stop a sync client
+- **venvs are not relocatable** — console scripts hardcode the interpreter path.
+  recreate it rather than moving it
+- only `anomaly.device_check` / `anomaly.device_source` run without TensorFlow
+  (they need just numpy + scipy + pyserial); everything else needs the full install
+
+```bash
 # (optional, only if you'll retrain) put the UBC PPG dataset at Code & Data/
 # it's ~3.8 GB and not in the repo — download link below.
 ```
@@ -80,7 +121,9 @@ python3 -m anomaly.serve --source device --device-port /dev/cu.usbmodem101
   charts, HR and the board's own SpO2 all work. needs `pyserial`
 - ⚠️ the saved threshold in `scorer.npz` was calibrated on WESAD wrist BVP, not on
   fingertip MAX30102 — the waveform is live and correct, but the stress flag is not
-  meaningful on real hardware until it is recalibrated on your own calm baseline
+  meaningful on real hardware until it is recalibrated on your own calm baseline.
+  fix it with `anomaly.device_calibrate` (below); `/dev`'s subtitle says which
+  thresholds are in force
 
 - `/` (alias `/watch`) — **Pulse Watch** product UI (default view)
 - `/dev` — developer dashboard: model flag vs WESAD ground truth (TP/FP/FN/TN +
@@ -128,6 +171,32 @@ python3 -m anomaly.compress                              # → ae_int8.tflite + 
 ```bash
 python3 -m anomaly.calibrate              # zero-shot vs device-calibrated: PR-AUC 0.75 -> 0.87
 ```
+
+### calibrate the flag on the REAL sensor (O6 on our own rig)
+
+`scorer.npz` holds WESAD **wrist** thresholds; the rig is a **fingertip** sensor,
+so the live flag means nothing until it is re-derived on your own calm. this
+records that calm and rewrites the thresholds:
+
+```bash
+python3 -m anomaly.device_check                      # get a steady GOOD TO RECORD first
+python3 -m anomaly.device_calibrate                  # 5 min of calm, sit still
+python3 -m anomaly.serve --source device             # now flags against your own baseline
+```
+
+- writes `anomaly/saved/scorer_device.npz`; `scorer.npz` is left alone, so the
+  WESAD replay demo is unaffected
+- `serve --source device` uses it automatically once it exists. force either one
+  with `--scorer wesad` / `--scorer device` — the before/after is the
+  domain-transfer delta, live
+- windows are gated on the same grip checks `device_check` prints: any tick that
+  fails restarts the 60 s clean run, so a fidget never teaches the model "normal"
+- `--simulate --minutes 2 --min-windows 5` runs the whole path on a synthetic pulse
+  with no board
+  attached and writes nothing — use it to check the tool before spending a
+  real recording on it
+- `--dry-run` reports the numbers without writing. the raw calm windows land in
+  `anomaly/saved/device_calm.npz` (gitignored — personal biometric data)
 
 WESAD is ~17 GB and gitignored — download it and unzip into `WESAD/`. `ae`/`ssl`/
 `serve`/`compress` use TensorFlow (a `baselines/requirements.txt` dep); for GPU install

@@ -42,3 +42,6 @@ tensorboard/
 # large local model artifacts — dashboard + device run ae_int8.tflite (4 MB, tracked)
 anomaly/saved/ae.keras
 anomaly/saved/ae_float32.tflite
+
+# recorded calm from the sensor — personal biometric data, and re-derivable
+anomaly/saved/device_calm.npz

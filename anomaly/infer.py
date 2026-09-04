@@ -2,8 +2,9 @@
 
 runs the **int8 TFLite** model (anomaly/saved/ae_int8.tflite) — the exact artifact
 that ships to the ESP32-S3 — so the dashboard shows what the device actually does.
-scorer.npz (written by anomaly.compress, calibrated on the int8 score distribution)
-turns one BVP window into:
+the scorer (`scorer.npz` from anomaly.compress, calibrated on the int8 score
+distribution over WESAD; or `scorer_device.npz` from anomaly.device_calibrate,
+re-derived on our own sensor) turns one BVP window into:
   • score  — raw reconstruction error
   • level  — 0..1 display value (calm ≈ 0, clearly anomalous ≈ 1)
   • flag   — bool, score past the saved threshold
@@ -14,13 +15,32 @@ import os
 import numpy as np
 
 SAVE_DIR = os.path.join(os.path.dirname(__file__), "saved")
+WESAD_SCORER = "scorer.npz"          # written by anomaly.compress, WESAD wrist BVP
+DEVICE_SCORER = "scorer_device.npz"  # written by anomaly.device_calibrate, our own rig
+
+
+def resolve_scorer(mode: str = "replay", save_dir: str | None = None) -> str:
+    """which scorer file a given source should flag against.
+
+    the device scorer only exists once `anomaly.device_calibrate` has been run.
+    until then the device falls back to the WESAD one — which is exactly the
+    documented caveat: the waveform is real, the flag is not yet meaningful,
+    because a wrist-BVP threshold is being applied to a fingertip sensor.
+    """
+    if mode == "device":
+        if os.path.exists(os.path.join(save_dir or SAVE_DIR, DEVICE_SCORER)):
+            return DEVICE_SCORER
+    return WESAD_SCORER
 
 
 class LiveAnomalyDetector:
-    def __init__(self, save_dir: str | None = None):
+    def __init__(self, save_dir: str | None = None, scorer: str | None = None):
         import tensorflow as tf
         save_dir = save_dir or SAVE_DIR
-        z = np.load(os.path.join(save_dir, "scorer.npz"))
+        self.scorer_name = scorer or WESAD_SCORER
+        z = np.load(os.path.join(save_dir, self.scorer_name))
+        # what the thresholds were derived on: "wesad" (public data) or "device"
+        self.calibrated_on = str(z["source"]) if "source" in z else "wesad"
         self.threshold = float(z["threshold"])
         self.win_len = int(z["win_len"])
         self.ref_lo = float(z["ref_lo"])

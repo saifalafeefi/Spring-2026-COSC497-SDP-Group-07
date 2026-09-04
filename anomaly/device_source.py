@@ -134,6 +134,7 @@ class DeviceSource:
         self.dropped = 0
         self.last_sample_at = 0.0
         self.last_error = None
+        self._tx_bpm = None      # host HR waiting to be sent to the board
 
     # ---------- lifecycle ----------
 
@@ -186,6 +187,27 @@ class DeviceSource:
                 "dropped": self.dropped, "buffered": self.available(),
                 "error": self.last_error}
 
+    def send_bpm(self, bpm) -> None:
+        """queue the host's heart rate for the board's display.
+
+        the write happens on the reader thread rather than here, so the port is
+        only ever touched from one thread. the value is a single slot, not a
+        queue: if the reader is busy the newest reading simply replaces the
+        older one, which is what a live display wants anyway.
+        """
+        with self._lock:
+            self._tx_bpm = int(round(bpm)) if bpm else None
+
+    def _flush_tx(self) -> None:
+        with self._lock:
+            bpm, self._tx_bpm = self._tx_bpm, None
+        if bpm is None or self._ser is None:
+            return
+        try:
+            self._ser.write(("H,%d\n" % bpm).encode("ascii"))
+        except Exception as e:                # a failed display update is not fatal
+            self.last_error = str(e)
+
     # ---------- serial ----------
 
     def _open_serial(self):
@@ -218,6 +240,7 @@ class DeviceSource:
                 if not raw:
                     continue                      # read timeout — board idle
                 self._handle(raw.decode("ascii", "ignore").strip())
+                self._flush_tx()
             except (serial.SerialException, OSError) as e:
                 self.last_error = str(e)
                 self._close_serial()
