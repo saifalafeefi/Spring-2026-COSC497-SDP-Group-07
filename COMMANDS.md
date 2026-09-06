@@ -204,6 +204,134 @@ WESAD is ~17 GB and gitignored — download it and unzip into `WESAD/`. `ae`/`ss
 
 ---
 
+## 2b. the board hosts the dashboard (WiFi)
+
+the ESP32 serves the dashboard itself and streams its own sensor over WiFi. the
+PC becomes an optional scorer rather than the thing everything runs on.
+
+```
+browser --HTTP/WS--> ESP32   dashboard + 64 Hz waveform + HR/SpO2 + TFT verdict
+                      ^  |
+             GET /flag |  | ws:// waveform
+                      |  v
+                     PC   anomaly.master (autoencoder, headless)
+```
+
+**the model is NOT on the board.** the ESP32 does sensing, conditioning, the web
+server and the display; the PC scores. that satisfies O4 but NOT DoD item 4 /
+O7, which still need an on-device model. the 520-byte Mahalanobis baseline in
+`anomaly/baseline.py` is the intended path there (0.64 PR-AUC vs the
+autoencoder's 0.71 — that gap IS the "accuracy cost" the DoD asks for).
+
+### 1. put the board on WiFi
+
+two ways; anything stored on the board wins over the header, since NVS survives
+a reflash.
+
+**hard-coded (recommended).** copy `sketch_aug3a/secrets.example.h` to
+`sketch_aug3a/secrets.h` (gitignored) and fill in:
+
+```c
+#define WIFI_SSID "yourssid"
+#define WIFI_PASS "yourpassword"
+```
+
+if the board already has credentials stored, clear them once, then power-cycle:
+
+```bash
+python3 -m anomaly.device_wifi --forget
+```
+
+**over USB.** no reflash needed, useful for switching networks:
+
+```bash
+python3 -m anomaly.device_wifi --ssid MyNetwork      # prompts for the password
+python3 -m anomaly.device_wifi --status              # what is it on? what IP?
+```
+
+the IP appears on the TFT header and on serial as `# wifi connected ssid=... ip=...`.
+**2.4 GHz only** — the ESP32 cannot join a 5 GHz-only SSID.
+
+### 2. rebuild the web assets after ANY dashboard edit
+
+the pages are gzipped into a C header and compiled into the firmware. change
+anything in `pulse/` or `anomaly/static/` and the board keeps serving the old
+copy until you re-run this and reflash:
+
+```bash
+python3 sketch_aug3a/make_web_assets.py     # -> sketch_aug3a/web_assets.h
+```
+
+(232 KB of dashboard — 68 KB gzipped in flash.)
+
+### 3. flash, then open the board's IP
+
+needs two Arduino libraries, both by **ESP32Async** (older forks do not build
+against ESP32 core 3.x): **ESP Async WebServer** and **Async TCP**.
+
+```
+http://<board-ip>/          Pulse Watch
+http://<board-ip>/dev       developer dashboard
+http://<board-ip>/health    plain text diagnostics -- try this FIRST
+```
+
+`/health` reports `ip rssi heap ir bpm cond head tail drop wsn sent skip rec ticks`:
+
+- `cond` climbing = conditioning is running. frozen = the sample loop is stuck
+- `ticks` should rise by hundreds between polls, not by one
+- `skip` = frames dropped for websocket backpressure (a weak link)
+- `rec` = times the sensor was re-initialised after stalling
+
+### 4. score it from the PC
+
+`anomaly.master` has **no web page**. it is a headless process: reads the
+board's stream, runs the autoencoder, pushes the verdict back.
+
+```bash
+python3 -m anomaly.master --host 10.49.10.173      # a full URL works too
+```
+
+look at the dashboard on the **board's** IP, not localhost. run `serve.py` OR
+`master.py`, never both — `serve.py` is the older all-in-one where the PC
+hosts the dashboard and reads the sensor over USB.
+
+expect `filling window 1360/3840` for the first 60 s: the model needs a full
+window before it can score anything.
+
+### detection latency — what to expect
+
+dominated by the 60 s window, not the network:
+
+| stage | cost |
+|---|---|
+| 60 s window | a change at t=0 only fills the window at t=60 s |
+| scoring cadence | 1 s (`--every`) |
+| EMA smoothing | ~2.3 s to 63%, ~5.3 s to 90% |
+| push to the board | milliseconds |
+
+so **~10-40 s** from event to flag, depending on how strongly it scores. fine
+for mental stress (the response builds over minutes); far too slow for falls.
+
+### gotchas that cost real time
+
+1. **do not leave USB plugged in with nothing reading it.** `Serial.write()`
+   blocks until the CDC timeout when the buffer fills; at 40 samples/s that
+   throttled the whole sample loop to one iteration every few seconds and looked
+   exactly like the sensor dying. fixed with `setTxTimeoutMs(0)` plus an
+   `if (!Serial) return` guard, but it is the first thing to suspect if the loop
+   crawls.
+2. **`--host` takes an address, not a URL** — both are accepted now, but
+   `ws://http://ip//ws` was a real failure mode.
+3. **weak WiFi shows up as lag, then a hang.** `ws.textAll()` only QUEUES;
+   queueing faster than the link drains grows the queue until the heap dies. the
+   firmware now skips frames when `availableForWriteAll()` is false. below about
+   -80 dBm, move the board closer.
+4. **Pulse Watch falls back to a MOCK replay** if the websocket does not open
+   within 3 s, complete with fabricated events. it looks like it is working when
+   it is not. `/dev` has no such fallback.
+
+---
+
 ## 3. real-time dashboard (earlier cardiac demo)
 
 a FastAPI + WebSocket server streams to a browser UI (drawn with uPlot). it

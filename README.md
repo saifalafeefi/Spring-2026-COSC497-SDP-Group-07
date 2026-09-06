@@ -74,6 +74,18 @@ above the WESAD threshold (0.212), so a zero-shot wrist model flags essentially
 100% of our calm; device-calibrated that is 10% by construction.** measured on one
 subject, calm only.
 
+**the board now hosts the dashboard itself.** the ESP32 joins WiFi, serves the
+whole UI from flash (232 KB of pages, 68 KB gzipped), conditions its own signal
+to 64 Hz in C, and streams it over a websocket {DASH} so a browser talks only to
+the device. the PC becomes an optional headless scorer (`anomaly/master.py`):
+it reads that stream, runs the autoencoder, and pushes the verdict back to the
+board's `/flag`, which drives both the TFT and every browser watching. when the
+PC goes away the board reports `--` rather than leaving a stale verdict on
+screen. **the model is still on the PC, not the board** {DASH} that satisfies O4
+but leaves DoD item 4 / O7 open, and the 520-byte Mahalanobis baseline
+(`anomaly/baseline.py`, 0.64 PR-AUC against the autoencoder's 0.71) is the
+intended on-device fallback.
+
 **not yet shown:** that the flag *rises under stress* on this hardware. everything
 above establishes what calm looks like. the induced-proxy test is the next step and
 the thing that would validate or sink the transfer claim.
@@ -92,6 +104,10 @@ tick as we go. `[x]` = done.
 **S1 · Mohamed — sensing & edge (O3, O7)**
 - [x] ESP32-S3 + MAX30102 rig streaming live to the dashboard (band-passed, resampled to 64 Hz)
 - [x] on-device heart rate: replaced the library estimate (assumed 25 Hz, swung 28–150 bpm) with a millis()-based detector; board and dashboard now agree within 1–2 bpm
+- [x] board joins WiFi (credentials in gitignored `secrets.h` or over USB) and serves the dashboard from flash
+- [x] signal conditioning (resample + band-pass) ported to C, verified against the Python to 1.7e-9
+- [x] TFT shows CALM / STRESSED / no-finger instead of a waveform
+- [ ] run a model on the board itself (DoD 4 / O7) — Mahalanobis baseline is the cheap path
 - [ ] assemble the Pi sensor rig (MAX30102 + accelerometer)
 - [ ] validate: resting HR within ±5 bpm of **a reference oximeter**, 5-min recording, ≥3 people
 - [ ] accelerometer logging working (no accelerometer on the rig yet)
@@ -129,6 +145,9 @@ built on the device path already (`anomaly/device_source.py`, `anomaly/device_ch
 - [x] tunable sensitivity/precision slider (with S2)
 - [x] Pulse Watch product UI integrated on the live pipeline (live Patients + History)
 - [x] Calibrate is a real backend session (progress, gate, commit) instead of a mock ramp
+- [x] the dashboard is served by the ESP32 over WiFi; the browser never touches the PC
+- [ ] strip `/dev` of its WESAD-only panels (ground truth, agreement) — meaningless on our hardware
+- [ ] remove Pulse Watch's mock-replay fallback, which shows fabricated data when the socket is slow
 - [x] with no finger on the sensor: HR, SpO₂, quality, level and flag blank instead of
       reporting noise, and the waveform holds its scale so noise draws flat
 - [ ] end-to-end demo glue
@@ -163,6 +182,10 @@ python3 -m anomaly.serve          # → http://localhost:8001  ( / Pulse Watch �
 # the same dashboard on the real sensor (ESP32-S3 + MAX30102 over USB)
 python3 -m anomaly.device_check           # grip coach: contact, perfusion, drift, quality
 python3 -m anomaly.serve --source device  # then hit Calibrate in the UI to set your baseline
+
+# or let the BOARD host the dashboard over WiFi, and score it from here
+python3 -m anomaly.device_wifi --ssid MyNetwork   # once; or hard-code sketch_aug3a/secrets.h
+python3 -m anomaly.master --host <board-ip>       # headless scorer; open http://<board-ip>/
 
 # evaluate the detectors on WESAD (needs WESAD downloaded; leave-one-subject-out)
 python3 -m anomaly.run --model ae --bottleneck 256 --ch-cap 32   # baseline | ae | ssl
@@ -201,6 +224,8 @@ anomaly/                             one-class anomaly detector (current directi
   device_source.py                   ESP32-S3 + MAX30102 serial reader → band-pass → 64 Hz
   device_check.py                    grip coach + the shared signal-quality gate
   device_calibrate.py                record our own calm, re-derive the flag threshold (O6)
+  device_wifi.py                     set the board's WiFi credentials over USB, read back its IP
+  master.py                          headless scorer: reads the board over WiFi, pushes the verdict back
   make_plots.py                      result figures (fig1–4)
   saved/                             deployed int8 model (ae_int8.tflite + scorer.npz; keras gitignored)
   RESULTS.md                         model results
@@ -221,7 +246,9 @@ pipeline/                            real-time streaming + dashboard (carries ov
   make_demo_data.py / demo_data.csv  92 s of curated PPG (ships with repo)
   SENSORS_SETUP.md                   Pi + sensor swap guide
 sketch_aug3a/                        ESP32-S3 firmware: streams IR/RED + vitals, TFT display
-  sketch_aug3a.ino                   time-based HR detector; mirrors the dashboard's HR when connected
+  sketch_aug3a.ino                   sensing, conditioning, WiFi, web server, websocket, TFT verdict
+  make_web_assets.py                 gzip the dashboard into web_assets.h (re-run after ANY UI edit)
+  secrets.example.h                  copy to secrets.h (gitignored) for the WiFi credentials
 pulse/                               Pulse Watch product UI (Zayed) — served at / by anomaly/serve.py
   Pulse Watch.dc.html / support.js   design-tool export; speaks serve.py's /ws protocol
 WESAD/ · Code & Data/                datasets (not in git)

@@ -21,6 +21,19 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9341.h>
 
+#include <WiFi.h>
+#include <Preferences.h>
+
+// Copy secrets.example.h to secrets.h and fill it in. It is gitignored, so
+// credentials stay off the repository while still being hard-coded for you.
+#include "secrets.h"
+
+#include <ESPAsyncWebServer.h>
+
+// The dashboard, gzipped into PROGMEM by sketch_aug3a/make_web_assets.py.
+// Re-run that script whenever pulse/ or anomaly/static/ changes.
+#include "web_assets.h"
+
 #include "MAX30105.h"
 #include "spo2_algorithm.h"
 
@@ -134,8 +147,40 @@ int8_t bpmValid = 0;
 const uint32_t HOST_BPM_TTL = 5000;   // ms before a host value is considered stale
 int32_t hostBpm = 0;
 uint32_t hostBpmMs = 0;
-char rxLine[16];
-uint8_t rxLen = 0;
+
+// The stress verdict, pushed from the dashboard as "S,<flag>,<level%>". The model
+// does not run on this board -- the host scores the 60 s window and sends the
+// result, exactly as it already does for heart rate. Same staleness rule: if the
+// host goes quiet the panel says so rather than leaving an old verdict on screen.
+int32_t hostFlag = -1;                // -1 unknown, 0 calm, 1 stressed
+int32_t hostLevel = 0;                // 0-100, the deviation percentage
+uint32_t hostFlagMs = 0;
+int32_t shownFlag = -2;               // what is currently painted, to avoid redraws
+uint32_t irDcDisplay = 0;             // slow IR average, for the no-finger check
+// Big enough for "W,<ssid>,<password>": an SSID is up to 32 chars and a WPA2
+// passphrase up to 63, so the old 16-byte buffer could never carry credentials.
+char rxLine[160];
+uint16_t rxLen = 0;
+
+// ---- WiFi -----------------------------------------------------------------
+// Credentials are typed over the USB serial link and kept in NVS, so they
+// survive a reflash of the sketch and never sit in source control.
+//     W,<ssid>,<password>   set and connect (SSID may not contain a comma)
+//     W?                    report status and IP
+//     W!                    forget the stored network
+Preferences prefs;
+
+// An ASYNC server on purpose: the sample loop blocks on the sensor FIFO for most
+// of every 25 ms, so a synchronous server would only be serviced in those gaps
+// and the page would crawl. AsyncWebServer runs on its own task instead.
+AsyncWebServer server(80);
+AsyncWebSocket ws("/ws");
+bool webStarted = false;
+String wifiSsid;
+String wifiPass;
+bool wifiWanted = false;         // credentials exist, so keep trying
+wl_status_t wifiLast = WL_NO_SHIELD;
+uint32_t wifiRetryMs = 0;
 
 
 // =====================================================
@@ -146,8 +191,6 @@ const int GRAPH_Y = 115;
 const int GRAPH_WIDTH = 300;
 const int GRAPH_HEIGHT = 110;
 
-int graphX = GRAPH_X;
-int previousGraphY = GRAPH_Y + GRAPH_HEIGHT / 2;
 
 // Drawing every sample was starving the sensor read loop: the FIFO overflowed
 // and we lost ~60% of the samples. Draw one point in GRAPH_DECIMATE, and scan
@@ -185,10 +228,68 @@ uint32_t statLastReport = 0;
 // attenuated into the noise floor.
 //
 // millis() at the moment of the read is simply correct.
+// The sensor's configuration, in one place so the recovery path applies exactly
+// what setup() did. ledBrightness 60 saturated the ADC on skin contact (IR read
+// ~250,000 against a 262,143 ceiling), so it stays at 30.
+uint32_t sensorRecoveries = 0;         // diagnostics: how often the sensor wedged
+
+// A healthy sensor delivers every ~25 ms. A second of silence means it is gone,
+// not slow.
+#define SENSOR_STALL_MS 1000
+
+void condReset();                      // defined with the conditioning, below
+
+void sensorConfigure() {
+  particleSensor.setup(
+    /* ledBrightness */ 30,
+    /* sampleAverage */ SENSOR_AVERAGE,
+    /* ledMode       */ 2,
+    /* sampleRate    */ SENSOR_SAMPLE_RATE,
+    /* pulseWidth    */ 411,
+    /* adcRange      */ 4096
+  );
+}
+
+// Bring a wedged sensor back. WiFi transmit bursts pull 250-350 mA, and on a
+// marginal supply that sag browns out the MAX30102 or leaves its I2C mid-
+// transaction; the symptom is IR collapsing to the ADC floor and the FIFO never
+// filling again. Re-cycling the bus and re-applying the configuration recovers
+// it without a reboot.
+bool sensorRecover() {
+  sensorRecoveries++;
+  Serial.println("# sensor stalled - reinitialising");
+  Wire.end();
+  delay(20);
+  Wire.begin(MAX_SDA, MAX_SCL);
+  Wire.setClock(400000);
+  if (!particleSensor.begin(Wire, I2C_SPEED_FAST)) {
+    Serial.println("# sensor did not come back");
+    return false;
+  }
+  sensorConfigure();
+  condReset();                   // the timebase has a hole in it now
+  return true;
+}
+
+// Bounded wait. The old version looped forever on available(), so a stalled
+// sensor froze the whole sketch -- the web server kept answering while the
+// sample loop, the display and the stream all stopped dead, which reads exactly
+// like a crash.
 uint32_t readSampleTimed(uint32_t *red, uint32_t *ir) {
+  uint32_t waitStart = millis();
   while (!particleSensor.available()) {
     particleSensor.check();
     delay(1);
+    if (millis() - waitStart > SENSOR_STALL_MS) {
+      sensorRecover();
+      waitStart = millis();
+      if (!particleSensor.available()) {
+        *red = 0;                // report nothing rather than block forever
+        *ir = 0;
+        return millis();
+      }
+      break;
+    }
   }
 
   uint32_t now = millis();
@@ -203,6 +304,9 @@ uint32_t readSampleTimed(uint32_t *red, uint32_t *ir) {
 
 void streamSample(uint32_t timestamp, uint32_t ir, uint32_t red) {
 #if STREAM_ENABLED
+  if (!Serial) {
+    return;                 // no host on the USB side; skip the formatting too
+  }
   char line[48];
   int n = snprintf(line, sizeof(line), "D,%lu,%lu,%lu\n",
                    (unsigned long)timestamp, (unsigned long)ir,
@@ -362,7 +466,472 @@ void drawInterface() {
   tft.setTextSize(1);
   tft.setTextColor(ILI9341_LIGHTGREY);
   tft.setCursor(GRAPH_X, GRAPH_Y - 10);
-  tft.print("Pulse waveform");
+  tft.print("Status");
+
+  shownFlag = -2;              // force the first status paint
+  wifiLast = WL_NO_SHIELD;     // force the header (IP) to repaint too
+}
+
+// =====================================================
+// CALM / STRESSED panel
+// =====================================================
+// Repaints only when the verdict changes, so the screen is not cleared 40x a
+// second (which is what made the old waveform panel flicker).
+void drawStatus() {
+  bool fresh = (hostFlag >= 0 && (millis() - hostFlagMs) < HOST_BPM_TTL);
+  bool finger = (irDcDisplay > 50000);
+  int32_t state = (!finger) ? -1 : (fresh ? hostFlag : -2);
+
+  if (state == shownFlag) {
+    return;                    // nothing changed, leave the panel alone
+  }
+  shownFlag = state;
+
+  uint16_t bg, fg;
+  const char *word;
+  const char *sub;
+  if (state == 1) {
+    bg = ILI9341_RED;    fg = ILI9341_WHITE;
+    word = "STRESSED";   sub = "deviation above your baseline";
+  } else if (state == 0) {
+    bg = ILI9341_DARKGREEN; fg = ILI9341_WHITE;
+    word = "CALM";       sub = "within your baseline";
+  } else if (state == -1) {
+    bg = ILI9341_BLACK;  fg = ILI9341_DARKGREY;
+    word = "--";         sub = "no finger on the sensor";
+  } else {
+    bg = ILI9341_BLACK;  fg = ILI9341_DARKGREY;
+    word = "--";         sub = "waiting for the dashboard";
+  }
+
+  tft.fillRect(GRAPH_X, GRAPH_Y, GRAPH_WIDTH, GRAPH_HEIGHT, bg);
+
+  tft.setTextColor(fg);
+  tft.setTextSize(4);
+  int16_t w = strlen(word) * 24;                 // 6 px glyph * size 4
+  tft.setCursor(GRAPH_X + (GRAPH_WIDTH - w) / 2, GRAPH_Y + 26);
+  tft.print(word);
+
+  tft.setTextSize(1);
+  int16_t sw = strlen(sub) * 6;
+  tft.setCursor(GRAPH_X + (GRAPH_WIDTH - sw) / 2, GRAPH_Y + 70);
+  tft.print(sub);
+
+  if (state == 0 || state == 1) {                // deviation bar
+    int bx = GRAPH_X + 30, bw = GRAPH_WIDTH - 60, by = GRAPH_Y + 88;
+    tft.drawRect(bx, by, bw, 8, fg);
+    int fillw = (bw - 2) * hostLevel / 100;
+    if (fillw > 0) tft.fillRect(bx + 1, by + 1, fillw, 6, fg);
+  }
+}
+
+// =====================================================
+// Signal conditioning: resample to 64 Hz, band-pass 0.7-3 Hz
+// =====================================================
+// A straight port of anomaly/device_source.py so the board produces the same
+// waveform the host used to. Coefficients from scipy
+// butter(2, [0.7, 3.0], btype='band', fs=64), and the difference equation below
+// is transposed direct form II -- the same form scipy's sosfilt uses, verified
+// to match it to zero error on a synthetic pulse before being written here.
+#define COND_FS      64
+#define COND_GAP_MS  500.0f            // bigger jump = discontinuity, re-prime
+#define COND_CAP     512               // ring buffer of conditioned samples
+
+static const int SOS_SECTIONS = 2;
+static const float SOS[SOS_SECTIONS][6] = {
+  {1.0957805345e-02f, 2.1915610689e-02f, 1.0957805345e-02f,
+   1.0000000000e+00f, -1.7227369981e+00f, 7.8253493658e-01f},
+  {1.0000000000e+00f, -2.0000000000e+00f, 1.0000000000e+00f,
+   1.0000000000e+00f, -1.9227142752e+00f, 9.2858394305e-01f},
+};
+// Steady state for a unit input (scipy sosfilt_zi). Scaled by the current DC so
+// the filter starts settled: without this the 0.7 Hz high-pass sees a step from
+// 0 to ~120,000 counts and rings for seconds, swamping the pulse.
+static const float SOS_ZI[SOS_SECTIONS][2] = {
+  { 7.2203103171e-01f, -5.6263156777e-01f},
+  {-7.3298883706e-01f,  7.3298883706e-01f},
+};
+
+float condZ[SOS_SECTIONS][2];
+bool  condPrimed = false;
+float condIrDc = 0.0f;                 // slow DC, alpha 0.04 as on the host
+float condTPrev = -1.0f;               // device ms of the previous raw sample
+float condIrPrev = 0.0f;
+float condTGrid = 0.0f;                // next 64 Hz grid point, in device ms
+
+float condBuf[COND_CAP];
+volatile uint16_t condHead = 0;        // written by the sample loop
+volatile uint16_t condTail = 0;        // read by the websocket task
+uint32_t condTotal = 0;                // conditioned samples since boot
+uint32_t condDropped = 0;
+uint32_t condSentIdx = 0;              // x-axis index of the next sample sent
+uint32_t wsFramesSent = 0;             // diagnostics: frames actually pushed
+uint32_t wsTicks = 0;                  // diagnostics: wsTick() entries
+uint32_t wsSkipped = 0;                // diagnostics: frames dropped for backpressure
+
+// 8 frames a second, each carrying ~8 samples of 64 Hz data. The chart redraws
+// far faster than an eye can follow either way, and a WebSocket message costs
+// the same in overhead whether it holds one sample or twenty -- so send fewer,
+// fuller frames. This is what keeps a -80 dBm link usable.
+#define WS_PERIOD_MS    125
+#define WS_MAX_SAMPLES  20
+
+void condPrime(float dc) {
+  for (int i = 0; i < SOS_SECTIONS; i++) {
+    condZ[i][0] = SOS_ZI[i][0] * dc;
+    condZ[i][1] = SOS_ZI[i][1] * dc;
+  }
+  condPrimed = true;
+}
+
+float condFilter(float x) {
+  float v = x;
+  for (int i = 0; i < SOS_SECTIONS; i++) {
+    float y = SOS[i][0] * v + condZ[i][0];
+    condZ[i][0] = SOS[i][1] * v - SOS[i][4] * y + condZ[i][1];
+    condZ[i][1] = SOS[i][2] * v - SOS[i][5] * y;
+    v = y;
+  }
+  return v;
+}
+
+void condPush(float v) {
+  uint16_t next = (condHead + 1) % COND_CAP;
+  if (next == condTail) {                 // consumer fell behind
+    condTail = (condTail + 1) % COND_CAP;
+    condDropped++;
+  }
+  condBuf[condHead] = v;
+  condHead = next;
+  condTotal++;
+}
+
+void condReset() {
+  condTPrev = -1.0f;
+  condPrimed = false;
+}
+
+// One raw sample in; zero or more conditioned 64 Hz samples out.
+void condFeed(uint32_t tMs, uint32_t ir) {
+  float t = (float)tMs;
+  float x = (float)ir;
+
+  condIrDc = (condIrDc == 0.0f) ? x : (0.96f * condIrDc + 0.04f * x);
+
+  if (condTPrev < 0.0f || t < condTPrev || (t - condTPrev) > COND_GAP_MS) {
+    condTPrev = t;                        // first sample, or the stream jumped
+    condIrPrev = x;
+    condTGrid = t;
+    condPrime(x);
+    return;
+  }
+  if (t == condTPrev) {
+    condIrPrev = x;                       // duplicate stamp, nothing to span
+    return;
+  }
+
+  const float step = 1000.0f / (float)COND_FS;
+  float span = t - condTPrev;
+  while (condTGrid <= t) {
+    float frac = (condTGrid - condTPrev) / span;
+    float interp = condIrPrev + frac * (x - condIrPrev);
+    if (!condPrimed) {
+      condPrime(interp);
+    }
+    condPush(condFilter(interp));
+    condTGrid += step;
+  }
+  condTPrev = t;
+  condIrPrev = x;
+}
+
+// =====================================================
+// Web server
+// =====================================================
+// Everything is served straight out of flash, pre-gzipped. No filesystem, no
+// upload plugin, and the assets cannot drift away from the firmware serving them.
+void webBegin() {
+  if (webStarted) {
+    return;
+  }
+
+  for (size_t i = 0; i < WEB_ASSET_COUNT; i++) {
+    const WebAsset *a = &WEB_ASSETS[i];
+    server.on(a->route, HTTP_GET, [a](AsyncWebServerRequest *req) {
+      AsyncWebServerResponse *res =
+          req->beginResponse_P(200, a->mime, a->data, a->len);
+      res->addHeader("Content-Encoding", "gzip");
+      res->addHeader("Cache-Control", "no-cache");
+      req->send(res);
+    });
+  }
+
+  // Pulse Watch is a single-patient view here, so /watch is just an alias.
+  server.on("/watch", HTTP_GET, [](AsyncWebServerRequest *req) {
+    AsyncWebServerResponse *res = req->beginResponse_P(
+        200, WEB_ASSETS[0].mime, WEB_ASSETS[0].data, WEB_ASSETS[0].len);
+    res->addHeader("Content-Encoding", "gzip");
+    req->send(res);
+  });
+
+  // The master pushes its verdict here: GET /flag?f=0|1&l=0..100
+  // It lands in exactly the state the serial "S,<flag>,<level>" command sets, so
+  // the TFT panel, the websocket stream and the staleness rule all work the same
+  // whether the verdict arrived over USB or over the network.
+  server.on("/flag", HTTP_GET, [](AsyncWebServerRequest *req) {
+    if (!req->hasParam("f")) {
+      req->send(400, "text/plain", "need ?f=0|1[&l=0..100]");
+      return;
+    }
+    int f = req->getParam("f")->value().toInt();
+    int l = req->hasParam("l") ? req->getParam("l")->value().toInt() : 0;
+    if (f != 0 && f != 1) {
+      req->send(400, "text/plain", "f must be 0 or 1");
+      return;
+    }
+    hostFlag = f;
+    hostLevel = constrain(l, 0, 100);
+    hostFlagMs = millis();
+    req->send(200, "text/plain", "ok");
+  });
+
+  // A plain-text health check, so a failure can be told apart from a hung page.
+  server.on("/health", HTTP_GET, [](AsyncWebServerRequest *req) {
+    String body = "ok ip=" + WiFi.localIP().toString() +
+                  " rssi=" + String(WiFi.RSSI()) +
+                  " heap=" + String(ESP.getFreeHeap()) +
+                  " ir=" + String(irDcDisplay) +
+                  " bpm=" + String(bpmValid ? bpmLive : 0) +
+                  // conditioning + websocket diagnostics: which link is dead?
+                  " cond=" + String(condTotal) +
+                  " head=" + String(condHead) +
+                  " tail=" + String(condTail) +
+                  " drop=" + String(condDropped) +
+                  " wsn=" + String(ws.count()) +
+                  " sent=" + String(wsFramesSent) +
+                  " skip=" + String(wsSkipped) +
+                  " rec=" + String(sensorRecoveries) +
+                  " ticks=" + String(wsTicks);
+    req->send(200, "text/plain", body);
+  });
+
+  ws.onEvent([](AsyncWebSocket *srv, AsyncWebSocketClient *client,
+                AwsEventType type, void *arg, uint8_t *data, size_t len) {
+    if (type == WS_EVT_CONNECT) {
+      Serial.print("# ws client ");
+      Serial.println(client->id());
+      char hello[320];
+      snprintf(hello, sizeof(hello),
+               "{\"type\":\"hello\",\"fs\":%d,\"win_s\":60,\"disp\":%d,\"infer_s\":1,"
+               "\"subject\":\"device\",\"running\":true,\"source\":\"device\","
+               "\"calibrated_on\":\"none\",\"model\":false,\"device_connected\":true,"
+               "\"device_port\":\"esp32\",\"sensitivity\":0.5,\"thr_level\":0.42,"
+               "\"threshold\":0}",
+               COND_FS, COND_FS * 15);
+      client->text(hello);
+    }
+  });
+  server.addHandler(&ws);
+
+  server.onNotFound([](AsyncWebServerRequest *req) {
+    req->send(404, "text/plain", "not found");
+  });
+
+  server.begin();
+  webStarted = true;
+  Serial.print("# web server on http://");
+  Serial.println(WiFi.localIP());
+}
+
+// Drain whatever the sample loop has conditioned and push it to the browser.
+// Called from the main loop; sends nothing when there is no client, so an
+// unopened dashboard costs almost nothing.
+void wsTick() {
+  static uint32_t lastSend = 0;
+  wsTicks++;
+  if (!webStarted || ws.count() == 0) {
+    condTail = condHead;                  // nobody listening, do not accumulate
+    return;
+  }
+  if (millis() - lastSend < WS_PERIOD_MS) {
+    return;
+  }
+
+  // BACKPRESSURE. textAll() only QUEUES a message. Queueing faster than a weak
+  // link can drain grows the queue without bound: the page lags, the heap
+  // drains, and the board dies in about half a minute -- which is exactly what
+  // it did at -80 dBm. Skip the frame instead; the ring buffer already drops
+  // the oldest samples, so we shed load rather than accumulate it.
+  if (!ws.availableForWriteAll()) {
+    wsSkipped++;
+    return;
+  }
+  if (ESP.getFreeHeap() < 60000) {        // last-ditch guard
+    wsSkipped++;
+    return;
+  }
+  lastSend = millis();
+
+  char idx[256];
+  char bvp[512];
+  int ni = 0, nb = 0;
+  int n = 0;
+  while (condTail != condHead && n < WS_MAX_SAMPLES) {
+    float v = condBuf[condTail];
+    condTail = (condTail + 1) % COND_CAP;
+    ni += snprintf(idx + ni, sizeof(idx) - ni, n ? ",%lu" : "%lu",
+                   (unsigned long)condSentIdx++);
+    nb += snprintf(bvp + nb, sizeof(bvp) - nb, n ? ",%.2f" : "%.2f", v);
+    n++;
+    if (ni > 200 || nb > 440) {
+      break;
+    }
+  }
+  if (n == 0) {
+    return;
+  }
+  idx[ni] = 0;
+  bvp[nb] = 0;
+
+  bool finger = (irDcDisplay > 50000);
+  uint32_t buffered = condTotal < (COND_FS * 60) ? condTotal : (COND_FS * 60);
+
+  // The verdict comes from the master. If it stops arriving we report null
+  // rather than leaving the last answer on screen pretending to be current.
+  bool verdictFresh = finger && hostFlag >= 0 &&
+                      (millis() - hostFlagMs) < HOST_BPM_TTL;
+  char levelStr[16];
+  if (verdictFresh) {
+    snprintf(levelStr, sizeof(levelStr), "%.3f", hostLevel / 100.0f);
+  } else {
+    snprintf(levelStr, sizeof(levelStr), "null");
+  }
+
+  char frame[1024];
+  snprintf(frame, sizeof(frame),
+           "{\"type\":\"f\",\"running\":true,\"elapsed\":%.1f,\"buf\":%lu,\"win\":%d,"
+           "\"idx\":[%s],\"bvp\":[%s],\"level\":%s,\"flag\":%s,\"score\":0,"
+           "\"bpm\":%s,\"spo2\":%s,\"quality\":null,\"label\":\"-\","
+           "\"device\":{\"connected\":true,\"port\":\"esp32\",\"contact\":%s,\"dropped\":%lu}}",
+           condTotal / (float)COND_FS, (unsigned long)buffered, COND_FS * 60,
+           idx, bvp, levelStr,
+           (verdictFresh && hostFlag == 1) ? "true" : "false",
+           (finger && bpmValid) ? String(bpmLive).c_str() : "null",
+           (finger && validSpo2 && spo2 >= 70 && spo2 <= 100)
+               ? String(spo2).c_str() : "null",
+           finger ? "true" : "false",
+           (unsigned long)condDropped);
+  ws.textAll(frame);
+  wsFramesSent++;
+  ws.cleanupClients();
+}
+
+// =====================================================
+// WiFi
+// =====================================================
+void wifiShowStatus() {
+  // The header line doubles as the address bar: once connected it shows the IP
+  // to type into a browser, which is the only thing the user actually needs.
+  tft.fillRect(0, 0, 320, 30, ILI9341_BLACK);
+  tft.setTextColor(ILI9341_CYAN);
+  tft.setTextSize(2);
+  tft.setCursor(10, 8);
+  if (WiFi.status() == WL_CONNECTED) {
+    tft.print(WiFi.localIP());
+  } else if (!wifiWanted) {
+    tft.setTextSize(1);
+    tft.setCursor(10, 12);
+    tft.print("no wifi set - send W,ssid,pass");
+  } else {
+    tft.print("connecting...");
+  }
+}
+
+void wifiConnect() {
+  if (!wifiWanted) {
+    return;
+  }
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);            // sleep adds latency to the websocket
+  // Full transmit power is what makes the 3.3 V rail sag hard enough to take the
+  // sensor down with it. At -59 dBm there is plenty of link margin to give back.
+  WiFi.setTxPower(WIFI_POWER_11dBm);
+  WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+  Serial.print("# wifi connecting to ");
+  Serial.println(wifiSsid);
+  wifiRetryMs = millis();
+}
+
+void wifiLoad() {
+  prefs.begin("netcfg", true);
+  wifiSsid = prefs.getString("ssid", "");
+  wifiPass = prefs.getString("pass", "");
+  prefs.end();
+
+  // Anything stored on the board wins: it survives a reflash, so a network set
+  // once from the host is not silently undone by whatever secrets.h happens to
+  // hold. Clear it with `device_wifi --forget` to fall back to the header.
+  if (wifiSsid.length() == 0) {
+    wifiSsid = String(WIFI_SSID);
+    wifiPass = String(WIFI_PASS);
+    if (wifiSsid.length() > 0) {
+      Serial.println("# wifi using secrets.h");
+    }
+  } else {
+    Serial.println("# wifi using stored credentials");
+  }
+
+  wifiWanted = wifiSsid.length() > 0;
+  if (!wifiWanted) {
+    Serial.println("# wifi not configured - set secrets.h, or send W,<ssid>,<password>");
+  }
+}
+
+void wifiSave(const String &ssid, const String &pass) {
+  prefs.begin("netcfg", false);
+  prefs.putString("ssid", ssid);
+  prefs.putString("pass", pass);
+  prefs.end();
+  wifiSsid = ssid;
+  wifiPass = pass;
+  wifiWanted = ssid.length() > 0;
+  Serial.print("# wifi saved ssid=");
+  Serial.println(ssid);
+  WiFi.disconnect();
+  wifiConnect();
+}
+
+void wifiReport() {
+  Serial.print("# wifi ssid=");
+  Serial.print(wifiSsid.length() ? wifiSsid : String("(none)"));
+  Serial.print(" status=");
+  Serial.print((int)WiFi.status());
+  Serial.print(" ip=");
+  Serial.println(WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString()
+                                               : String("-"));
+}
+
+// Called from the sample loop: repaint on any change, and retry a dropped
+// connection every 10 s. Never blocks -- the sensor read loop must keep running
+// whether or not the network is up.
+void wifiPoll() {
+  wl_status_t st = WiFi.status();
+  if (st != wifiLast) {
+    wifiLast = st;
+    if (st == WL_CONNECTED) {
+      Serial.print("# wifi connected ssid=");
+      Serial.print(WiFi.SSID());
+      Serial.print(" ip=");
+      Serial.println(WiFi.localIP());
+      webBegin();                // safe to call repeatedly; starts once
+    }
+    wifiShowStatus();
+  }
+  if (wifiWanted && st != WL_CONNECTED && (millis() - wifiRetryMs) > 10000) {
+    wifiRetryMs = millis();
+    WiFi.disconnect();
+    WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+  }
 }
 
 // =====================================================
@@ -378,6 +947,34 @@ void pollHostSerial() {
         if (v > 25 && v < 240) {
           hostBpm = v;
           hostBpmMs = millis();
+        }
+      } else if (rxLen >= 2 && rxLine[0] == 'W' && rxLine[1] == '?') {
+        wifiReport();
+      } else if (rxLen >= 2 && rxLine[0] == 'W' && rxLine[1] == '!') {
+        wifiSave("", "");
+        Serial.println("# wifi forgotten");
+      } else if (rxLen > 3 && rxLine[0] == 'W' && rxLine[1] == ',') {
+        // "W,<ssid>,<password>" -- split on the FIRST comma after the prefix,
+        // so a password may contain commas even though an SSID may not.
+        char *body = &rxLine[2];
+        char *comma = strchr(body, ',');
+        if (comma != NULL) {
+          *comma = '\0';
+          wifiSave(String(body), String(comma + 1));
+          wifiShowStatus();
+        } else {
+          Serial.println("# usage: W,<ssid>,<password>");
+        }
+      } else if (rxLen > 3 && rxLine[0] == 'S' && rxLine[1] == ',') {
+        // "S,<flag>,<level>"  e.g. S,0,18
+        int f = atoi(&rxLine[2]);
+        char *comma = strchr(&rxLine[2], ',');
+        if (comma != NULL && (f == 0 || f == 1)) {
+          hostFlag = f;
+          hostLevel = atoi(comma + 1);
+          if (hostLevel < 0) hostLevel = 0;
+          if (hostLevel > 100) hostLevel = 100;
+          hostFlagMs = millis();
         }
       }
       rxLen = 0;
@@ -464,9 +1061,14 @@ void updateNumbers() {
 
   tft.setTextSize(3);
 
-  bool hostFresh = (hostBpm > 0 && (millis() - hostBpmMs) < HOST_BPM_TTL);
+  // The board knows whether a finger is present and must never print a rate
+  // without one, whatever the host claims. Defence in depth: the host now stops
+  // sending on contact loss, but a stale or buggy sender cannot put a number
+  // back on this screen.
+  bool fingerOn = (irDcDisplay > 50000);
+  bool hostFresh = fingerOn && hostBpm > 0 && (millis() - hostBpmMs) < HOST_BPM_TTL;
   int32_t showBpm = hostFresh ? hostBpm : bpmLive;
-  bool showValid = hostFresh ? true : (bpmValid != 0);
+  bool showValid = fingerOn && (hostFresh ? true : (bpmValid != 0));
 
   if (showValid) {
     tft.setTextColor(ILI9341_GREEN);
@@ -483,7 +1085,7 @@ void updateNumbers() {
 
   tft.setTextSize(3);
 
-  if (validSpo2 && spo2 >= 70 && spo2 <= 100) {
+  if (fingerOn && validSpo2 && spo2 >= 70 && spo2 <= 100) {
     tft.setTextColor(ILI9341_CYAN);
     tft.setCursor(165, 70);
     tft.print(spo2);
@@ -524,70 +1126,6 @@ void showFingerMessage(bool fingerPresent) {
 // =====================================================
 // Draw one point on the waveform graph
 // =====================================================
-void updateGraphScale() {
-  uint32_t minimumValue = irBuffer[0];
-  uint32_t maximumValue = irBuffer[0];
-
-  for (int i = 1; i < SAMPLE_BUFFER_SIZE; i++) {
-    if (irBuffer[i] < minimumValue) {
-      minimumValue = irBuffer[i];
-    }
-
-    if (irBuffer[i] > maximumValue) {
-      maximumValue = irBuffer[i];
-    }
-  }
-
-  if (maximumValue <= minimumValue + 100) {
-    maximumValue = minimumValue + 100;
-  }
-
-  graphMin = minimumValue;
-  graphMax = maximumValue;
-}
-
-void drawGraphPoint(uint32_t irValue) {
-  int currentY = map(
-    irValue,
-    graphMin,
-    graphMax,
-    GRAPH_Y + GRAPH_HEIGHT - 3,
-    GRAPH_Y + 3
-  );
-
-  currentY = constrain(
-    currentY,
-    GRAPH_Y + 2,
-    GRAPH_Y + GRAPH_HEIGHT - 2
-  );
-
-  // Erase the current graph column
-  tft.drawFastVLine(
-    graphX,
-    GRAPH_Y + 1,
-    GRAPH_HEIGHT - 2,
-    ILI9341_BLACK
-  );
-
-  if (graphX > GRAPH_X) {
-    tft.drawLine(
-      graphX - 1,
-      previousGraphY,
-      graphX,
-      currentY,
-      ILI9341_GREEN
-    );
-  }
-
-  previousGraphY = currentY;
-  graphX++;
-
-  if (graphX >= GRAPH_X + GRAPH_WIDTH) {
-    graphX = GRAPH_X;
-    previousGraphY = currentY;
-  }
-}
-
 // =====================================================
 // Collect the first 100 samples
 // =====================================================
@@ -607,6 +1145,10 @@ void readInitialSamples() {
       streamSample(timestamp, ir, red);
       updateHeartRate(ir, timestamp);
       pollHostSerial();
+      irDcDisplay = (irDcDisplay == 0) ? ir : (irDcDisplay * 15 + ir) / 16;
+      condFeed(timestamp, ir);
+      if ((statSamples & 0xFF) == 0) wifiPoll();
+      wsTick();
 
       if (k == SPO2_DECIMATE - 1) {     // keep the last of each group
         redBuffer[i] = red;
@@ -664,7 +1206,13 @@ void setup() {
   // stalls the sketch outright whenever nothing is attached, which looks exactly
   // like a frozen screen. 0 = never block; drop bytes instead when unread.
 #if ARDUINO_USB_CDC_ON_BOOT
-  Serial.setTxTimeoutMs(10);
+  // 0 = never block, drop bytes instead. 10 ms looks harmless until nothing is
+  // draining the port: with USB plugged in for power but no reader attached, the
+  // CDC buffer fills and EVERY write stalls for the timeout. At 40 samples a
+  // second, with a stream line plus stats per sample, that throttled the whole
+  // sample loop to one iteration every few seconds -- which looked exactly like
+  // the sensor dying, and is why it only appeared once we went WiFi-only.
+  Serial.setTxTimeoutMs(0);
 #endif
 
   // Native USB-CDC on the ESP32-S3 only enumerates after boot, so anything
@@ -693,6 +1241,10 @@ void setup() {
   drawInterface();
 
   // Start I2C for MAX30102
+  wifiLoad();
+  wifiConnect();
+  wifiShowStatus();
+
   Wire.begin(MAX_SDA, MAX_SCL);
   Wire.setClock(400000);
 
@@ -723,21 +1275,7 @@ void setup() {
   // makes the maxim SpO2 algorithm return -999. 30 lands a fingertip around
   // 100-150k with headroom. If IR still reads >240,000 with a finger on, drop it
   // further; if it reads <50,000, raise it.
-  byte ledBrightness = 30;
-  byte sampleAverage = SENSOR_AVERAGE;
-  byte ledMode = 2;
-  int sampleRate = SENSOR_SAMPLE_RATE;
-  int pulseWidth = 411;
-  int adcRange = 4096;
-
-  particleSensor.setup(
-    ledBrightness,
-    sampleAverage,
-    ledMode,
-    sampleRate,
-    pulseWidth,
-    adcRange
-  );
+  sensorConfigure();
 
   // Collect first block of samples
   readInitialSamples();
@@ -764,9 +1302,6 @@ void loop() {
     irBuffer[i - SAMPLES_PER_BATCH] = irBuffer[i];
   }
 
-  // Rescale the graph once per batch, not once per sample
-  updateGraphScale();
-
   // Refill the tail with a fresh batch
   for (int i = SAMPLE_BUFFER_SIZE - SAMPLES_PER_BATCH; i < SAMPLE_BUFFER_SIZE; i++) {
     for (int k = 0; k < SPO2_DECIMATE; k++) {
@@ -779,8 +1314,8 @@ void loop() {
       bool fingerPresent = ir > 50000;
       showFingerMessage(fingerPresent);
 
-      if (fingerPresent && (statSamples % GRAPH_DECIMATE) == 0) {
-        drawGraphPoint(ir);
+      if ((statSamples % GRAPH_DECIMATE) == 0) {
+        drawStatus();
       }
       uint32_t t2 = micros();
 
@@ -789,6 +1324,10 @@ void loop() {
       streamSample(timestamp, ir, red);
       updateHeartRate(ir, timestamp);
       pollHostSerial();
+      irDcDisplay = (irDcDisplay == 0) ? ir : (irDcDisplay * 15 + ir) / 16;
+      condFeed(timestamp, ir);
+      if ((statSamples & 0xFF) == 0) wifiPoll();
+      wsTick();
       uint32_t t3 = micros();
 
       if (k == SPO2_DECIMATE - 1) {     // keep the last of each group

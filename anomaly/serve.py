@@ -230,6 +230,13 @@ class Engine:
         return self.det.score(np.fromiter(self.infbuf, dtype=np.float32))
 
     def _heart_rate(self) -> float | None:
+        # No finger, no heart rate. The stream never stops (the 64 Hz timebase must
+        # stay continuous), so the estimator is handed band-passed noise and will
+        # happily fit a confident number to it -- 124 bpm off an empty sensor. The
+        # dashboards hid that at display time, but it was still being pushed to the
+        # board over the wire, where it became the value on the TFT.
+        if self.mode == "device" and not self.source.status()["contact"]:
+            return None
         # HR over a ~12 s tail (responsive; the full 60 s window lags too much).
         tail = list(self.infbuf)[-12 * FS:]
         if len(tail) < 8 * FS:
@@ -309,6 +316,9 @@ class Engine:
                     self.score = self.score_ema
                     self.level = self.det.level(self.score)
                     self.flag = self.det.flag(self.score)
+                    if self.mode == "device":
+                        # the board has no model; it shows the verdict we compute
+                        self.source.send_status(self.flag, self.level)
                 await self.broadcast(self.frame(nidx, nbvp))
                 if self.calib is not None and self.total % FS < SAMPLES_PER_TICK:
                     st = self.calib.status()

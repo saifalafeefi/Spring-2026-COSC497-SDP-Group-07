@@ -135,6 +135,7 @@ class DeviceSource:
         self.last_sample_at = 0.0
         self.last_error = None
         self._tx_bpm = None      # host HR waiting to be sent to the board
+        self._tx_status = None   # (flag, level%) waiting to be sent
 
     # ---------- lifecycle ----------
 
@@ -198,13 +199,27 @@ class DeviceSource:
         with self._lock:
             self._tx_bpm = int(round(bpm)) if bpm else None
 
+    def send_status(self, flag: bool, level: float) -> None:
+        """queue the stress verdict for the board's display.
+
+        the model does not run on the board, so the verdict has to come from here.
+        level is 0-1 and is sent as a whole percent.
+        """
+        pct = int(round(max(0.0, min(1.0, float(level))) * 100))
+        with self._lock:
+            self._tx_status = (1 if flag else 0, pct)
+
     def _flush_tx(self) -> None:
         with self._lock:
             bpm, self._tx_bpm = self._tx_bpm, None
-        if bpm is None or self._ser is None:
+            st, self._tx_status = self._tx_status, None
+        if self._ser is None:
             return
         try:
-            self._ser.write(("H,%d\n" % bpm).encode("ascii"))
+            if bpm is not None:
+                self._ser.write(("H,%d\n" % bpm).encode("ascii"))
+            if st is not None:
+                self._ser.write(("S,%d,%d\n" % st).encode("ascii"))
         except Exception as e:                # a failed display update is not fatal
             self.last_error = str(e)
 

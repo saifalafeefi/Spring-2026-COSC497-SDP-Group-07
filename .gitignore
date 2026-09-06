@@ -45,3 +45,14 @@ anomaly/saved/ae_float32.tflite
 
 # recorded calm from the sensor — personal biometric data, and re-derivable
 anomaly/saved/device_calm.npz
+
+# wifi credentials for the board (copy secrets.example.h)
+sketch_aug3a/secrets.h
+
+# editor cruft from the Arduino web IDE
+sketch_aug3a/.theia/
+
+# generated from pulse/ and anomaly/static/ by sketch_aug3a/make_web_assets.py.
+# 421 KB that would churn on every UI tweak, and one command rebuilds it --
+# but the sketch will NOT compile until you run that command once.
+sketch_aug3a/web_assets.h
