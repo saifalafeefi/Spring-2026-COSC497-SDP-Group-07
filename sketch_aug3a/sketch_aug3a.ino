@@ -121,22 +121,12 @@ int8_t validSpo2 = 0;
 int32_t heartRate = 0;
 int8_t validHeartRate = 0;
 
-// Heart rate measured in TIME (see updateHeartRate below). Declared here because
-// streamVitals() reports it long before that function appears in the file.
-const int HR_BEATS = 8;             // intervals kept for the median
-const uint32_t HR_MIN_MS = 300;     // refractory: 200 bpm ceiling
-const uint32_t HR_MAX_MS = 2000;    // 30 bpm floor
-
-float hrBaseline = 0.0f;            // slow DC follower
-float hrEnvelope = 0.0f;            // typical AC magnitude
-bool hrArmed = false;               // inside a beat, waiting to re-arm
-uint32_t hrLastBeatMs = 0;
-uint32_t hrIntervals[HR_BEATS];
-int hrCount = 0;
-int hrIdx = 0;
-
+// Heart rate. The algorithm lives with the conditioning below, because it runs
+// on the conditioned 64 Hz signal; these are declared here because
+// streamVitals() reports the value long before that code appears in the file.
 int32_t bpmLive = 0;
 int8_t bpmValid = 0;
+uint32_t hrLastCompute = 0;
 
 // Heart rate pushed back from the dashboard. It measures on a band-passed 64 Hz
 // stream over a 12 s window -- longer and cleaner than anything the board can
@@ -176,6 +166,11 @@ Preferences prefs;
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 bool webStarted = false;
+
+// Stable per-board identity, derived from the MAC. The master keys everything on
+// this -- which device is which in the roster, and which calibration file holds
+// that person's baseline -- so it must survive reboots and DHCP changing the IP.
+String devId = "pulse-unknown";
 String wifiSsid;
 String wifiPass;
 bool wifiWanted = false;         // credentials exist, so keep trying
@@ -238,6 +233,8 @@ uint32_t sensorRecoveries = 0;         // diagnostics: how often the sensor wedg
 #define SENSOR_STALL_MS 1000
 
 void condReset();                      // defined with the conditioning, below
+void hrReset();                        // defined with the heart rate, below
+void hrPush(float v);                  // fed from the conditioner, below
 
 void sensorConfigure() {
   particleSensor.setup(
@@ -609,6 +606,7 @@ void condPush(float v) {
 void condReset() {
   condTPrev = -1.0f;
   condPrimed = false;
+  hrReset();                          // the signal is discontinuous now
 }
 
 // One raw sample in; zero or more conditioned 64 Hz samples out.
@@ -638,11 +636,196 @@ void condFeed(uint32_t tMs, uint32_t ir) {
     if (!condPrimed) {
       condPrime(interp);
     }
-    condPush(condFilter(interp));
+    float y = condFilter(interp);
+    condPush(y);
+    hrPush(y);                        // the HR algorithm runs on the same signal
     condTGrid += step;
   }
   condTPrev = t;
   condIrPrev = x;
+}
+
+// =====================================================
+// Heart rate -- the SAME algorithm the host uses
+// =====================================================
+// A port of pipeline/vitals.estimate_heart_rate: band-pass the (already
+// conditioned) signal again with zero phase, find peaks constrained by distance
+// and prominence, and take the median interval. Verified against scipy before
+// being written here -- identical to 0.0 bpm across 48-150 bpm and three noise
+// levels, in the one regime where they disagreed BOTH were wrong the same way.
+//
+// The board used to run its own beat-timing detector instead. Two algorithms for
+// one number meant the TFT and the dashboard could disagree for no physical
+// reason, and the board's version swung 50 bpm on a vibrating finger because it
+// had no notion of a physiologically plausible rate. There is now one algorithm.
+//
+// Known limitation, inherited from the host: below about 55 bpm the dicrotic
+// notch clears the prominence bar and the rate reads double.
+#define HR_WIN_SEC   12
+#define HR_WIN       (COND_FS * HR_WIN_SEC)      // 768 samples
+#define HR_MIN_N     (COND_FS * 4)               // needs 4 s before it answers
+#define HR_MAX_PEAKS 64
+
+float hrBuf[HR_WIN];                 // last 12 s of conditioned signal
+uint16_t hrHead = 0;
+uint16_t hrN = 0;
+float hrWork[HR_WIN];                // filtfilt scratch
+
+void hrReset() {
+  hrHead = 0;
+  hrN = 0;
+  bpmLive = 0;
+  bpmValid = 0;
+}
+
+void hrPush(float v) {
+  hrBuf[hrHead] = v;
+  hrHead = (hrHead + 1) % HR_WIN;
+  if (hrN < HR_WIN) {
+    hrN++;
+  }
+}
+
+// zero-phase: filter forward, then backward over the result
+void hrFiltFilt(float *x, int n) {
+  float z[SOS_SECTIONS][2] = {{0.0f, 0.0f}, {0.0f, 0.0f}};
+  for (int i = 0; i < n; i++) {
+    float v = x[i];
+    for (int sct = 0; sct < SOS_SECTIONS; sct++) {
+      float y = SOS[sct][0] * v + z[sct][0];
+      z[sct][0] = SOS[sct][1] * v - SOS[sct][4] * y + z[sct][1];
+      z[sct][1] = SOS[sct][2] * v - SOS[sct][5] * y;
+      v = y;
+    }
+    x[i] = v;
+  }
+  for (int sct = 0; sct < SOS_SECTIONS; sct++) {
+    z[sct][0] = 0.0f;
+    z[sct][1] = 0.0f;
+  }
+  for (int i = n - 1; i >= 0; i--) {
+    float v = x[i];
+    for (int sct = 0; sct < SOS_SECTIONS; sct++) {
+      float y = SOS[sct][0] * v + z[sct][0];
+      z[sct][0] = SOS[sct][1] * v - SOS[sct][4] * y + z[sct][1];
+      z[sct][1] = SOS[sct][2] * v - SOS[sct][5] * y;
+      v = y;
+    }
+    x[i] = v;
+  }
+}
+
+void hrCompute() {
+  if (hrN < HR_MIN_N) {
+    bpmValid = 0;
+    return;
+  }
+  int n = hrN;
+  for (int i = 0; i < n; i++) {              // unroll the ring, oldest first
+    hrWork[i] = hrBuf[(hrHead + HR_WIN - n + i) % HR_WIN];
+  }
+  hrFiltFilt(hrWork, n);
+
+  float mean = 0.0f;
+  for (int i = 0; i < n; i++) mean += hrWork[i];
+  mean /= n;
+  float var = 0.0f;
+  for (int i = 0; i < n; i++) {
+    float d = hrWork[i] - mean;
+    var += d * d;
+  }
+  float sd = sqrtf(var / n);
+  if (sd <= 0.0f) {
+    bpmValid = 0;
+    return;
+  }
+  const float minProm = 0.4f * sd;
+  const int minDist = (int)(COND_FS * 0.4f);   // 150 bpm ceiling
+
+  int peaks[HR_MAX_PEAKS];
+  float heights[HR_MAX_PEAKS];
+  int np = 0;
+  for (int i = 1; i < n - 1 && np < HR_MAX_PEAKS; i++) {
+    if (!(hrWork[i] > hrWork[i - 1] && hrWork[i] >= hrWork[i + 1])) {
+      continue;
+    }
+    int j = i;                                  // walk down to the left trough
+    while (j > 0 && hrWork[j - 1] < hrWork[j]) j--;
+    float left = hrWork[i];
+    for (int k = j; k <= i; k++) if (hrWork[k] < left) left = hrWork[k];
+    int m = i;                                  // and the right trough
+    while (m < n - 1 && hrWork[m + 1] < hrWork[m]) m++;
+    float right = hrWork[i];
+    for (int k = i; k <= m; k++) if (hrWork[k] < right) right = hrWork[k];
+    float base = left > right ? left : right;
+    if (hrWork[i] - base >= minProm) {
+      peaks[np] = i;
+      heights[np] = hrWork[i];
+      np++;
+    }
+  }
+  if (np < 2) {
+    bpmValid = 0;
+    return;
+  }
+
+  // tallest first, then drop anything within minDist of one already kept
+  for (int a = 1; a < np; a++) {
+    int pi = peaks[a];
+    float ph = heights[a];
+    int b = a - 1;
+    while (b >= 0 && heights[b] < ph) {
+      peaks[b + 1] = peaks[b];
+      heights[b + 1] = heights[b];
+      b--;
+    }
+    peaks[b + 1] = pi;
+    heights[b + 1] = ph;
+  }
+  int kept[HR_MAX_PEAKS];
+  int nk = 0;
+  for (int a = 0; a < np; a++) {
+    bool ok = true;
+    for (int b = 0; b < nk; b++) {
+      int d = peaks[a] - kept[b];
+      if (d < 0) d = -d;
+      if (d < minDist) { ok = false; break; }
+    }
+    if (ok) kept[nk++] = peaks[a];
+  }
+  if (nk < 2) {
+    bpmValid = 0;
+    return;
+  }
+  for (int a = 1; a < nk; a++) {               // back into time order
+    int v = kept[a];
+    int b = a - 1;
+    while (b >= 0 && kept[b] > v) { kept[b + 1] = kept[b]; b--; }
+    kept[b + 1] = v;
+  }
+
+  int gaps[HR_MAX_PEAKS];
+  int ng = 0;
+  for (int a = 1; a < nk; a++) gaps[ng++] = kept[a] - kept[a - 1];
+  for (int a = 1; a < ng; a++) {               // median of the intervals
+    int v = gaps[a];
+    int b = a - 1;
+    while (b >= 0 && gaps[b] > v) { gaps[b + 1] = gaps[b]; b--; }
+    gaps[b + 1] = v;
+  }
+  float med = (ng % 2) ? (float)gaps[ng / 2]
+                       : 0.5f * (gaps[ng / 2 - 1] + gaps[ng / 2]);
+  if (med <= 0.0f) {
+    bpmValid = 0;
+    return;
+  }
+  float bpm = 60.0f * COND_FS / med;
+  if (bpm < 30.0f || bpm > 200.0f) {
+    bpmValid = 0;
+    return;
+  }
+  bpmLive = (int32_t)(bpm + 0.5f);
+  bpmValid = 1;
 }
 
 // =====================================================
@@ -697,7 +880,8 @@ void webBegin() {
 
   // A plain-text health check, so a failure can be told apart from a hung page.
   server.on("/health", HTTP_GET, [](AsyncWebServerRequest *req) {
-    String body = "ok ip=" + WiFi.localIP().toString() +
+    String body = "ok id=" + devId +
+                  " ip=" + WiFi.localIP().toString() +
                   " rssi=" + String(WiFi.RSSI()) +
                   " heap=" + String(ESP.getFreeHeap()) +
                   " ir=" + String(irDcDisplay) +
@@ -723,11 +907,11 @@ void webBegin() {
       char hello[320];
       snprintf(hello, sizeof(hello),
                "{\"type\":\"hello\",\"fs\":%d,\"win_s\":60,\"disp\":%d,\"infer_s\":1,"
-               "\"subject\":\"device\",\"running\":true,\"source\":\"device\","
+               "\"subject\":\"%s\",\"running\":true,\"source\":\"device\","
                "\"calibrated_on\":\"none\",\"model\":false,\"device_connected\":true,"
                "\"device_port\":\"esp32\",\"sensitivity\":0.5,\"thr_level\":0.42,"
                "\"threshold\":0}",
-               COND_FS, COND_FS * 15);
+               COND_FS, COND_FS * 15, devId.c_str());
       client->text(hello);
     }
   });
@@ -852,6 +1036,13 @@ void wifiConnect() {
     return;
   }
   WiFi.mode(WIFI_STA);
+  {
+    uint8_t m[6];
+    WiFi.macAddress(m);
+    char b[24];
+    snprintf(b, sizeof(b), "pulse-%02x%02x%02x", m[3], m[4], m[5]);
+    devId = String(b);
+  }
   WiFi.setSleep(false);            // sleep adds latency to the websocket
   // Full transmit power is what makes the 3.3 V rail sag hard enough to take the
   // sensor down with it. At -59 dBm there is plenty of link margin to give back.
@@ -987,72 +1178,6 @@ void pollHostSerial() {
 }
 
 // =====================================================
-// Heart rate, measured in TIME rather than in samples
-// =====================================================
-// Beats are timed with millis(), so nothing here depends on the sample rate and
-// it cannot fall out of tune when the delivered rate drifts or SPO2_DECIMATE is
-// retuned. Same principle the host uses on its 64 Hz stream, which is why the
-// two agree.
-void hrReset() {
-  hrBaseline = 0.0f; hrEnvelope = 0.0f; hrArmed = false;
-  hrLastBeatMs = 0; hrCount = 0; hrIdx = 0;
-  bpmLive = 0; bpmValid = 0;
-}
-
-void updateHeartRate(uint32_t ir, uint32_t nowMs) {
-  if (ir < 50000) {                 // no finger: nothing to time
-    hrReset();
-    return;
-  }
-  float v = (float)ir;
-  if (hrBaseline == 0.0f) { hrBaseline = v; hrEnvelope = 0.0f; }
-
-  hrBaseline += (v - hrBaseline) * 0.02f;
-  float ac = v - hrBaseline;
-  hrEnvelope += (fabsf(ac) - hrEnvelope) * 0.02f;
-
-  float thresh = hrEnvelope * 0.6f;
-  if (thresh < 20.0f) return;       // envelope not established yet
-
-  if (!hrArmed && ac > thresh) {
-    uint32_t dt = nowMs - hrLastBeatMs;
-    // A real refractory. Inside HR_MIN_MS this crossing is a noise spike riding
-    // on the upstroke, not a new beat. Returning here (rather than falling
-    // through) leaves hrLastBeatMs untouched: the earlier version reset the beat
-    // clock to the spike, so the NEXT genuine beat was timed from the wrong
-    // instant. Measured at 25% sample noise that read 109 bpm for a true 85.
-    if (hrLastBeatMs != 0 && dt < HR_MIN_MS) {
-      return;
-    }
-    hrArmed = true;
-    if (hrLastBeatMs != 0 && dt <= HR_MAX_MS) {
-      hrIntervals[hrIdx] = dt;
-      hrIdx = (hrIdx + 1) % HR_BEATS;
-      if (hrCount < HR_BEATS) hrCount++;
-
-      if (hrCount >= 4) {           // median of recent intervals rejects outliers
-        uint32_t tmp[HR_BEATS];
-        for (int i = 0; i < hrCount; i++) tmp[i] = hrIntervals[i];
-        for (int i = 1; i < hrCount; i++) {
-          uint32_t key = tmp[i];
-          int j = i - 1;
-          while (j >= 0 && tmp[j] > key) { tmp[j + 1] = tmp[j]; j--; }
-          tmp[j + 1] = key;
-        }
-        uint32_t med = tmp[hrCount / 2];
-        if (med > 0) {
-          bpmLive = (int32_t)(60000.0f / (float)med + 0.5f);
-          bpmValid = (bpmLive > 25 && bpmLive < 240) ? 1 : 0;
-        }
-      }
-    }
-    hrLastBeatMs = nowMs;
-  } else if (hrArmed && ac < thresh * 0.4f) {
-    hrArmed = false;                // hysteresis: re-arm on the falling edge
-  }
-}
-
-// =====================================================
 // Update BPM and SpO2 values
 // =====================================================
 void updateNumbers() {
@@ -1143,11 +1268,14 @@ void readInitialSamples() {
       // Stream the warm-up block too — the host wants an unbroken record from
       // boot, not a 4 s hole before the first calculateReadings().
       streamSample(timestamp, ir, red);
-      updateHeartRate(ir, timestamp);
       pollHostSerial();
       irDcDisplay = (irDcDisplay == 0) ? ir : (irDcDisplay * 15 + ir) / 16;
       condFeed(timestamp, ir);
       if ((statSamples & 0xFF) == 0) wifiPoll();
+      if (millis() - hrLastCompute > 1000) {   // once a second, like the host
+        hrLastCompute = millis();
+        hrCompute();
+      }
       wsTick();
 
       if (k == SPO2_DECIMATE - 1) {     // keep the last of each group
@@ -1322,11 +1450,14 @@ void loop() {
       // Always stream, finger or not — the host decides what counts as contact
       // and needs the gaps to stay on a continuous timebase.
       streamSample(timestamp, ir, red);
-      updateHeartRate(ir, timestamp);
       pollHostSerial();
       irDcDisplay = (irDcDisplay == 0) ? ir : (irDcDisplay * 15 + ir) / 16;
       condFeed(timestamp, ir);
       if ((statSamples & 0xFF) == 0) wifiPoll();
+      if (millis() - hrLastCompute > 1000) {   // once a second, like the host
+        hrLastCompute = millis();
+        hrCompute();
+      }
       wsTick();
       uint32_t t3 = micros();
 

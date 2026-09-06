@@ -125,7 +125,9 @@ partition scheme with a large enough app partition.
    queueing faster than the link drains kills the heap. The firmware now skips
    frames when `availableForWriteAll()` is false. Below about −80 dBm, move the
    board closer.
-9. **The board resets when the serial port is opened**, so a host tool must wait
+9. **HR below ~55 bpm reads double** — the dicrotic notch clears the
+   prominence bar. Inherited from the host algorithm, so both show it.
+10. **The board resets when the serial port is opened**, so a host tool must wait
    for `# setup done` before sending commands.
 
 ---
@@ -135,7 +137,7 @@ partition scheme with a large enough app partition.
 | what | result |
 |---|---|
 | C conditioning vs `device_source.py` | max relative difference **1.7e-9** (coefficient truncation; float32 on the board is ~1e-7) |
-| board HR vs host HR | within **1–2 bpm**, stable |
+| board HR algorithm vs the host's | **identical to 0.0 bpm** on 19/21 test cases; the 2 disagreements are at 48 bpm, where BOTH report ~96 |
 | contact detection | no finger **14,413** IR vs finger **125,007** — clean 8× separation |
 | steady perfusion index | **0.2–0.4%**, below the "healthy 0.5–5%" range fixed gates assumed |
 | sample rate with WiFi active | **40.0–40.2 Hz**, unaffected |

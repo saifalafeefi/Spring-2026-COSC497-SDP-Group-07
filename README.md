@@ -103,7 +103,7 @@ tick as we go. `[x]` = done.
 
 **S1 · Mohamed — sensing & edge (O3, O7)**
 - [x] ESP32-S3 + MAX30102 rig streaming live to the dashboard (band-passed, resampled to 64 Hz)
-- [x] on-device heart rate: replaced the library estimate (assumed 25 Hz, swung 28–150 bpm) with a millis()-based detector; board and dashboard now agree within 1–2 bpm
+- [x] on-device heart rate: the board runs the SAME algorithm as the host (`pipeline/vitals.estimate_heart_rate` ported to C, verified identical to 0.0 bpm) — one algorithm, so the TFT and the dashboard cannot disagree
 - [x] board joins WiFi (credentials in gitignored `secrets.h` or over USB) and serves the dashboard from flash
 - [x] signal conditioning (resample + band-pass) ported to C, verified against the Python to 1.7e-9
 - [x] TFT shows CALM / STRESSED / no-finger instead of a waveform

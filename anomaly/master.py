@@ -55,8 +55,15 @@ def push_flag(host: str, flag: bool, level: float, timeout: float = 2.0) -> bool
 
 
 async def run(host: str, every: float) -> int:
+    import os
     import websockets
     from .infer import LiveAnomalyDetector, resolve_scorer
+
+    # the host's own HR, from the same stream, purely for comparison against what
+    # the board reports. the board owns the number that is displayed.
+    sys.path.insert(0, os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline"))
+    from vitals import estimate_heart_rate
 
     print("  loading model… (~45 s: TensorFlow + the 4 MB int8 model)", flush=True)
     det = LiveAnomalyDetector(scorer=resolve_scorer("device"))
@@ -117,9 +124,26 @@ async def run(host: str, every: float) -> int:
                     ok = push_flag(host, flag, level)
                     pushes += ok
                     fails += (not ok)
+
+                    # HR the host computes from this same waveform, next to the
+                    # value the board put in the frame. the board owns the
+                    # displayed number; this is here only so the two can be
+                    # compared. both now run the same algorithm, so a persistent
+                    # gap means the board is on older firmware.
+                    tail = np.fromiter(buf, dtype=np.float32, count=WIN)[-12 * FS:]
+                    host_bpm = estimate_heart_rate(tail, fs=FS)
+                    board_bpm = m.get("bpm")
+                    hb = f"{host_bpm:.0f}" if host_bpm else "--"
+                    bb = f"{board_bpm}" if board_bpm else "--"
+                    gap = ""
+                    if host_bpm and board_bpm:
+                        d = abs(host_bpm - board_bpm)
+                        gap = f" (d {d:.0f})" + ("  <-- MISMATCH" if d > 5 else "")
+
                     print(f"\r  score {ema:.5f}  level {level*100:5.1f}%  "
                           f"{'FLAG' if flag else 'calm'}   "
-                          f"pushed {pushes} failed {fails}   ", end="", flush=True)
+                          f"hr board {bb:>3} host {hb:>3}{gap}   "
+                          f"pushed {pushes}/{pushes+fails}      ", end="", flush=True)
         except KeyboardInterrupt:
             return 0
         except Exception as e:

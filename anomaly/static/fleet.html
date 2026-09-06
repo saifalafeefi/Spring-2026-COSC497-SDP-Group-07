@@ -1,0 +1,130 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Pulse Fleet</title>
+<style>
+  :root{--bg:#0f1419;--card:#182029;--line:#2c3742;--ink:#e6edf3;--dim:#8b98a5;
+        --ok:#2BAE73;--warn:#E0982A;--bad:#F2645A;--accent:#2E86AB}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif}
+  header{display:flex;align-items:center;gap:14px;padding:16px 22px;
+         border-bottom:1px solid var(--line)}
+  h1{font-size:16px;margin:0;font-weight:650}
+  .sub{color:var(--dim);font-size:12px;flex:1}
+  button{background:#223042;color:var(--ink);border:1px solid var(--line);
+         border-radius:7px;padding:7px 13px;font-size:13px;cursor:pointer}
+  button:hover{background:#2b3d52}
+  button:disabled{opacity:.4;cursor:default}
+  main{padding:22px;display:grid;gap:16px;
+       grid-template-columns:repeat(auto-fill,minmax(330px,1fr))}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:16px}
+  .top{display:flex;align-items:center;gap:9px;margin-bottom:14px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--dim);flex:none}
+  .dot.on{background:var(--ok)}
+  .id{font-weight:650;letter-spacing:.01em}
+  .ip{color:var(--dim);font-size:12px;margin-left:auto}
+  .verdict{font-size:26px;font-weight:700;margin:6px 0 2px}
+  .verdict.calm{color:var(--ok)} .verdict.flag{color:var(--bad)}
+  .verdict.none{color:var(--dim)}
+  .why{color:var(--dim);font-size:12px;min-height:17px}
+  .bar{height:7px;background:#0d1218;border-radius:4px;margin:11px 0 3px;overflow:hidden}
+  .bar>div{height:100%;background:var(--accent);width:0}
+  .vitals{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:13px 0 4px}
+  .v{background:#131a22;border-radius:7px;padding:8px 10px}
+  .v b{display:block;font-size:17px;font-weight:650}
+  .v span{color:var(--dim);font-size:11px}
+  .row{display:flex;gap:8px;margin-top:13px}
+  .row a,.row button{flex:1;text-align:center;text-decoration:none;font-size:12px;
+                     padding:7px 0;border-radius:7px}
+  .row a{background:#223042;color:var(--ink);border:1px solid var(--line)}
+  .row a:hover{background:#2b3d52}
+  .warn{color:var(--warn);font-size:12px;margin-top:9px}
+  .empty{grid-column:1/-1;color:var(--dim);text-align:center;padding:60px 20px}
+  code{background:#131a22;padding:2px 6px;border-radius:4px;font-size:12px}
+</style>
+
+<header>
+  <h1>Pulse Fleet</h1>
+  <div class="sub" id="sub">scanning…</div>
+  <button id="rescan">Rescan</button>
+</header>
+<main id="grid"><div class="empty">looking for devices…</div></main>
+
+<script>
+const $ = i => document.getElementById(i);
+let devices = [];
+
+// Each card links OUT to the device's own dashboard rather than re-rendering it
+// here: the board already serves a complete single-patient view, and a device
+// must never show anything about another device.
+function card(d){
+  const pct = d.level == null ? 0 : Math.round(d.level*100);
+  const warming = d.buf < d.win;
+  let verdict, cls, why;
+  if(!d.connected){            verdict='OFFLINE'; cls='none';
+                               why='no stream from this board'; }
+  else if(!d.contact){         verdict='—';       cls='none';
+                               why='no finger on the sensor'; }
+  else if(!d.calibrated){      verdict='—';       cls='none';
+                               why='not calibrated — no baseline for this person'; }
+  else if(warming){            verdict='—';       cls='none';
+                               why=`warming up · ${Math.ceil((d.win-d.buf)/64)}s left`; }
+  else if(d.flag){             verdict='STRESSED';cls='flag';
+                               why=`deviation ${pct}% · above this person's baseline`; }
+  else {                       verdict='CALM';    cls='calm';
+                               why=`deviation ${pct}% · within baseline`; }
+
+  const c = d.calib;
+  const calibRow = c
+    ? `<div class="row">
+         <button onclick="calib('${d.id}','commit')" ${c.can_commit?'':'disabled'}>
+           Commit (${c.windows}/${c.target})</button>
+         <button onclick="calib('${d.id}','cancel')">Cancel</button>
+       </div>
+       <div class="why">recording calm — sit still, ${c.windows}/${c.target} windows</div>`
+    : `<div class="row">
+         <a href="http://${d.ip}/" target="_blank">Open its dashboard ↗</a>
+         <button onclick="calib('${d.id}','start')">Calibrate</button>
+       </div>`;
+
+  return `<div class="card">
+    <div class="top">
+      <span class="dot ${d.connected?'on':''}"></span>
+      <span class="id">${d.id}</span>
+      <span class="ip">${d.ip}</span>
+    </div>
+    <div class="verdict ${cls}">${verdict}</div>
+    <div class="why">${why}</div>
+    <div class="bar"><div style="width:${d.flag?pct:pct}%;
+         background:${d.flag?'var(--bad)':'var(--accent)'}"></div></div>
+    <div class="vitals">
+      <div class="v"><b>${d.bpm ?? '—'}</b><span>bpm</span></div>
+      <div class="v"><b>${d.spo2 ?? '—'}</b><span>SpO₂ %</span></div>
+      <div class="v"><b>${d.contact?'yes':'no'}</b><span>finger</span></div>
+    </div>
+    ${d.calibrated?'':'<div class="warn">no baseline yet — calibrate to enable the flag</div>'}
+    ${calibRow}
+  </div>`;
+}
+
+async function calib(id, action){
+  await fetch(`/api/calib/${id}/${action}`, {method:'POST'});
+  tick();
+}
+
+async function tick(){
+  try{
+    const r = await (await fetch('/api/devices')).json();
+    devices = r.devices;
+    $('sub').textContent = `${devices.length} device${devices.length===1?'':'s'} on `
+      + `${r.subnet}.0/24` + (r.scanning ? ' · scanning…' : '');
+    $('grid').innerHTML = devices.length
+      ? devices.map(card).join('')
+      : `<div class="empty">no devices found on ${r.subnet}.0/24<br><br>`
+        + `is a board powered and on this network?<br>`
+        + `it must answer <code>http://&lt;ip&gt;/health</code></div>`;
+  }catch(e){ $('sub').textContent = 'master unreachable'; }
+}
+$('rescan').onclick = async () => { await fetch('/api/rescan',{method:'POST'}); tick(); };
+tick(); setInterval(tick, 1000);
+</script>
