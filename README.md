@@ -143,7 +143,9 @@ built on the device path already (`anomaly/device_source.py`, `anomaly/device_ch
 **S4 · Zayed — dashboard & integration (O4)**
 - [x] live dashboard: stream → anomaly score → threshold flag → alert + event log
 - [x] tunable sensitivity/precision slider (with S2)
-- [x] Pulse Watch product UI integrated on the live pipeline (live Patients + History)
+- [x] Pulse Watch product UI integrated on the live pipeline (live monitor + history)
+- [x] the fake sign-in and the one-row Patients tab are gone; subjects live on the
+      master's roster, and the board keeps only its last 5 flags
 - [x] Calibrate is a real backend session (progress, gate, commit) instead of a mock ramp
 - [x] the dashboard is served by the ESP32 over WiFi; the browser never touches the PC
 - [ ] strip `/dev` of its WESAD-only panels (ground truth, agreement) — meaningless on our hardware

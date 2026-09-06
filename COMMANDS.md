@@ -214,9 +214,12 @@ python3 -m anomaly.fleet          # roster -> http://localhost:8002
 
 scans every local subnet for boards, scores each one, pushes each verdict back
 to that board. no IP to look up. `--subnet 192.168.1` only if a board is on a
-network this machine is not. calibrate each device from the roster — it
-writes `anomaly/saved/scorer_<device-id>.npz`, so every person gets their own
-baseline, and an uncalibrated device gets no flag rather than someone else's.
+network this machine is not. assign a subject to each board from the roster,
+then calibrate — the baseline is stored against the SUBJECT in `data/pulse.db`,
+not against the board, so it follows the person from one board to another. a
+board with nobody on it, or somebody with no baseline yet, gets no flag rather
+than someone else's. sessions open and close on their own as contact comes and
+goes; nobody presses start.
 
 everything below is the single-device detail behind that command.
 

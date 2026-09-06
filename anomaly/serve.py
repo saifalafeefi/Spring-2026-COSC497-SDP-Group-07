@@ -466,7 +466,7 @@ async def ws_endpoint(ws: WebSocket):
         thr_level = engine.det.level(engine.det.threshold)
         dev = engine.source.status() if engine.mode == "device" else None
         await ws.send_text(json.dumps({
-            "type": "hello", "fs": FS, "win_s": WIN_LEN / FS,
+            "type": "hello", "role": "host", "fs": FS, "win_s": WIN_LEN / FS,
             "disp": DISPLAY, "infer_s": INFER_EVERY / FS,
             "thr_level": round(thr_level, 3), "threshold": round(engine.det.threshold, 5),
             "subject": engine.subject, "running": engine.running,

@@ -15,10 +15,12 @@
          border-radius:7px;padding:7px 13px;font-size:13px;cursor:pointer}
   button:hover{background:#2b3d52}
   button:disabled{opacity:.4;cursor:default}
+  select{background:#131a22;color:var(--ink);border:1px solid var(--line);
+         border-radius:7px;padding:6px 9px;font-size:13px;max-width:100%}
   main{padding:22px;display:grid;gap:16px;
        grid-template-columns:repeat(auto-fill,minmax(330px,1fr))}
   .card{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:16px}
-  .top{display:flex;align-items:center;gap:9px;margin-bottom:14px}
+  .top{display:flex;align-items:center;gap:9px;margin-bottom:10px}
   .dot{width:9px;height:9px;border-radius:50%;background:var(--dim);flex:none}
   .dot.on{background:var(--ok)}
   .id{font-weight:650;letter-spacing:.01em}
@@ -28,7 +30,7 @@
   .verdict.none{color:var(--dim)}
   .why{color:var(--dim);font-size:12px;min-height:17px}
   .bar{height:7px;background:#0d1218;border-radius:4px;margin:11px 0 3px;overflow:hidden}
-  .bar>div{height:100%;background:var(--accent);width:0}
+  .bar>div{height:100%;background:var(--accent);width:0;transition:width .25s}
   .vitals{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:13px 0 4px}
   .v{background:#131a22;border-radius:7px;padding:8px 10px}
   .v b{display:block;font-size:17px;font-weight:650}
@@ -38,93 +40,397 @@
                      padding:7px 0;border-radius:7px}
   .row a{background:#223042;color:var(--ink);border:1px solid var(--line)}
   .row a:hover{background:#2b3d52}
-  .warn{color:var(--warn);font-size:12px;margin-top:9px}
   .empty{grid-column:1/-1;color:var(--dim);text-align:center;padding:60px 20px}
+  #stale{background:#3a2a12;color:#f0c674;border-bottom:1px solid #5a4426;
+         padding:10px 22px;font-size:13px}
   code{background:#131a22;padding:2px 6px;border-radius:4px;font-size:12px}
+  /* a small pencil, so renaming does not need its own screen */
+  .pen{background:none;border:0;color:var(--dim);padding:2px 5px;font-size:12px;
+       cursor:pointer;border-radius:5px;line-height:1;flex:none}
+  .pen:hover{background:#223042;color:var(--ink)}
+  /* who is wearing this board */
+  .wear{display:flex;align-items:center;gap:4px;margin:2px 0 8px}
+  .wear select{flex:1;min-width:0}
+  .base{color:var(--dim);font-size:11px;margin:0 0 10px;min-height:16px}
+  .qual{font-size:11px;color:var(--dim);min-height:16px;margin-top:2px}
+  /* the host keeps the detailed history; the board keeps a short one */
+  .hist{margin-top:14px;border-top:1px solid var(--line);padding-top:11px}
+  .hist h3{font-size:11px;font-weight:600;color:var(--dim);margin:0 0 7px;
+           text-transform:uppercase;letter-spacing:.06em}
+  .ev{display:flex;align-items:baseline;gap:8px;font-size:12px;padding:3px 0}
+  .ev .t{color:var(--dim);flex:none}
+  .ev .pk{color:var(--bad);font-weight:600}
+  .ev .live{color:var(--bad)}
+  .ev button{padding:2px 8px;font-size:11px;margin-left:auto;border-radius:5px}
+  .ev.acked{opacity:.45}
+  .none{color:var(--dim);font-size:12px}
+  /* the people, listed apart from the hardware */
+  .srow{display:flex;align-items:center;gap:6px;padding:7px 0;
+        border-top:1px solid var(--line)}
+  .srow:first-child{border-top:0}
+  .sname{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .smeta{color:var(--dim);font-size:11px}
 </style>
 
 <header>
   <h1>Pulse Fleet</h1>
   <div class="sub" id="sub">scanning…</div>
+  <button id="newsub">New subject</button>
   <button id="rescan">Rescan</button>
 </header>
+<div id="stale" hidden></div>
 <main id="grid"><div class="empty">looking for devices…</div></main>
 
 <script>
 const $ = i => document.getElementById(i);
-let devices = [];
+let devices = [], subjects = [], events = {};
+// the API this page was written against; the master reports its own in /api/devices
+const NEEDS_API = 3;
 
-// Each card links OUT to the device's own dashboard rather than re-rendering it
-// here: the board already serves a complete single-patient view, and a device
-// must never show anything about another device.
-function card(d){
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function ago(t){
+  const s = Math.max(0, Date.now()/1000 - t);
+  if(s < 60) return Math.round(s)+'s ago';
+  if(s < 3600) return Math.round(s/60)+'m ago';
+  if(s < 86400) return Math.round(s/3600)+'h ago';
+  return Math.round(s/86400)+'d ago';
+}
+// only touch the DOM when the value actually changed: assigning textContent on
+// every tick makes text unselectable and thrashes layout for nothing
+const setText = (el, v) => { if(el.textContent !== v) el.textContent = v; };
+const setHTML = (el, v) => { if(el.dataset.sig !== v){ el.dataset.sig = v; el.innerHTML = v; } };
+
+// ---------------------------------------------------------------- one card
+//
+// Cards are BUILT once and then patched field by field. The first version
+// re-rendered the whole grid every second, which meant it had to skip the
+// render whenever a control had focus -- and a <select> keeps focus after you
+// choose, so picking a subject froze the card until you clicked elsewhere.
+// Patching in place has no such conflict: the dropdown is left alone and every
+// other field keeps updating.
+const cards = new Map();
+
+function buildCard(id){
+  const root = document.createElement('div');
+  root.className = 'card';
+  root.innerHTML = `
+    <div class="top">
+      <span class="dot"></span>
+      <span class="id js-name"></span>
+      <button class="pen js-rename-dev" title="Rename this board">&#9998;</button>
+      <span class="ip js-ip"></span>
+    </div>
+    <div class="wear">
+      <select class="js-sel"></select>
+      <button class="pen js-rename-sub" title="Rename this subject">&#9998;</button>
+      <button class="pen js-del-sub" title="Delete this subject">&#128465;</button>
+    </div>
+    <div class="base js-base"></div>
+    <div class="verdict js-verdict"></div>
+    <div class="qual js-qual"></div>
+    <div class="why js-why"></div>
+    <div class="bar"><div class="js-fill"></div></div>
+    <div class="vitals">
+      <div class="v"><b class="js-bpm">—</b><span>bpm</span></div>
+      <div class="v"><b class="js-spo2">—</b><span>SpO₂ %</span></div>
+      <div class="v"><b class="js-contact">—</b><span>finger</span></div>
+    </div>
+    <div class="js-actions"></div>
+    <div class="hist"><h3 class="js-histtitle">History</h3><div class="js-hist"></div></div>`;
+
+  const q = c => root.querySelector('.js-' + c);
+  const c = {root, name:q('name'), ip:q('ip'), dot:root.querySelector('.dot'),
+             sel:q('sel'), base:q('base'), verdict:q('verdict'), why:q('why'),
+             fill:q('fill'), bpm:q('bpm'), spo2:q('spo2'), contact:q('contact'),
+             actions:q('actions'), hist:q('hist'), histTitle:q('histtitle'),
+             qual:q('qual'), renameDev:q('rename-dev'), renameSub:q('rename-sub'),
+             delSub:q('del-sub'), subjSig:null};
+
+  c.sel.onchange = () => assign(id, c.sel.value);
+  c.renameDev.onclick = () => renameDevice(id);
+  c.renameSub.onclick = () => { const d = devices.find(x => x.id === id);
+                                if(d && d.subject) renameSubject(d.subject.id); };
+  c.delSub.onclick   = () => { const d = devices.find(x => x.id === id);
+                                if(d && d.subject) deleteSubject(d.subject.id); };
+  cards.set(id, c);
+  return c;
+}
+
+function updateCard(d){
+  const c = cards.get(d.id) || buildCard(d.id);
   const pct = d.level == null ? 0 : Math.round(d.level*100);
   const warming = d.buf < d.win;
+
   let verdict, cls, why;
   if(!d.connected){            verdict='OFFLINE'; cls='none';
                                why='no stream from this board'; }
+  else if(!d.subject){         verdict='—';       cls='none';
+                               why='nobody assigned — the flag has no one to be about'; }
+  else if(!d.baseline){        verdict='—';       cls='none';
+                               why=d.subject.code+' has no baseline yet'; }
   else if(!d.contact){         verdict='—';       cls='none';
                                why='no finger on the sensor'; }
-  else if(!d.calibrated){      verdict='—';       cls='none';
-                               why='not calibrated — no baseline for this person'; }
   else if(warming){            verdict='—';       cls='none';
-                               why=`warming up · ${Math.ceil((d.win-d.buf)/64)}s left`; }
+                               why='warming up · '+Math.ceil((d.win-d.buf)/64)+'s left'; }
   else if(d.flag){             verdict='STRESSED';cls='flag';
-                               why=`deviation ${pct}% · above this person's baseline`; }
+                               why='deviation '+pct+"% · above "+d.subject.code+"'s baseline"; }
   else {                       verdict='CALM';    cls='calm';
-                               why=`deviation ${pct}% · within baseline`; }
+                               why='deviation '+pct+'% · within baseline'; }
 
-  const c = d.calib;
-  const calibRow = c
-    ? `<div class="row">
-         <button onclick="calib('${d.id}','commit')" ${c.can_commit?'':'disabled'}>
-           Commit (${c.windows}/${c.target})</button>
-         <button onclick="calib('${d.id}','cancel')">Cancel</button>
-       </div>
-       <div class="why">recording calm — sit still, ${c.windows}/${c.target} windows</div>`
-    : `<div class="row">
-         <a href="http://${d.ip}/" target="_blank">Open its dashboard ↗</a>
-         <button onclick="calib('${d.id}','start')">Calibrate</button>
-       </div>`;
+  setText(c.name, d.name || d.id);
+  // the hardware id is the identity, not the label: it lives on the tooltip so a
+  // renamed board reads as its name and nothing else.
+  if(c.name.title !== d.id) c.name.title = d.id;
+  setText(c.ip, d.ip);
+  c.dot.classList.toggle('on', !!d.connected);
+  setText(c.verdict, verdict);
+  if(c.verdict.className !== 'verdict js-verdict ' + cls)
+    c.verdict.className = 'verdict js-verdict ' + cls;
+  setText(c.why, why);
+  // a refused window is not a calm one: say which it is, rather than leaving a
+  // stale level on screen as though it were current
+  setText(c.qual, d.quality_note ? '⚠ ' + d.quality_note
+                : d.quality != null ? 'signal quality ' + Math.round(d.quality * 100) + '%'
+                : '');
+  c.qual.style.color = d.quality_note ? 'var(--warn)' : 'var(--dim)';
+  c.fill.style.width = pct + '%';
+  c.fill.style.background = d.flag ? 'var(--bad)' : 'var(--accent)';
+  setText(c.bpm, d.bpm == null ? '—' : String(d.bpm));
+  setText(c.spo2, d.spo2 == null ? '—' : String(d.spo2));
+  setText(c.contact, d.contact ? 'yes' : 'no');
 
-  return `<div class="card">
-    <div class="top">
-      <span class="dot ${d.connected?'on':''}"></span>
-      <span class="id">${d.id}</span>
-      <span class="ip">${d.ip}</span>
-    </div>
-    <div class="verdict ${cls}">${verdict}</div>
-    <div class="why">${why}</div>
-    <div class="bar"><div style="width:${d.flag?pct:pct}%;
-         background:${d.flag?'var(--bad)':'var(--accent)'}"></div></div>
-    <div class="vitals">
-      <div class="v"><b>${d.bpm ?? '—'}</b><span>bpm</span></div>
-      <div class="v"><b>${d.spo2 ?? '—'}</b><span>SpO₂ %</span></div>
-      <div class="v"><b>${d.contact?'yes':'no'}</b><span>finger</span></div>
-    </div>
-    ${d.calibrated?'':'<div class="warn">no baseline yet — calibrate to enable the flag</div>'}
-    ${calibRow}
-  </div>`;
+  // the subject dropdown: options only when the roster changed, value only when
+  // it disagrees and the user is not in the middle of using it
+  const sig = subjects.map(s => s.id+':'+s.code+':'+(s.display_name||'')).join('|');
+  if(c.subjSig !== sig){
+    c.subjSig = sig;
+    c.sel.innerHTML = '<option value="">— nobody —</option>' + subjects.map(s =>
+      '<option value="'+s.id+'">'+esc(s.code)
+      + (s.display_name && s.display_name !== s.code ? ' · '+esc(s.display_name) : '')
+      + '</option>').join('');
+  }
+  const want = d.subject ? String(d.subject.id) : '';
+  if(c.sel.value !== want && document.activeElement !== c.sel) c.sel.value = want;
+  const vis = d.subject ? 'visible' : 'hidden';
+  c.renameSub.style.visibility = vis;
+  c.delSub.style.visibility = vis;
+
+  const b = d.baseline;
+  setText(c.base, b
+    ? 'baseline '+b.threshold+' from '+b.n_windows+' calm windows · '+ago(b.created)
+    : (d.subject ? 'no baseline — calibrate to enable the flag' : ''));
+
+  const cal = d.calib;
+  setHTML(c.actions, cal
+    ? '<div class="row">'
+      + '<button onclick="calib(\''+d.id+'\',\'commit\')"'+(cal.can_commit?'':' disabled')+'>'
+      + 'Commit ('+cal.windows+'/'+cal.target+')</button>'
+      + '<button onclick="calib(\''+d.id+'\',\'cancel\')">Cancel</button></div>'
+      + '<div class="why">recording calm — sit still, '+cal.windows+'/'+cal.target+' windows</div>'
+    : '<div class="row">'
+      + '<a href="http://'+d.ip+'/" target="_blank">Open its dashboard ↗</a>'
+      + '<button onclick="calib(\''+d.id+'\',\'start\')"'+(d.subject?'':' disabled')+'>'
+      + (b?'Recalibrate':'Calibrate')+'</button></div>');
+
+  setText(c.histTitle, 'History' + (d.subject ? ' · '+d.subject.code : ''));
+  const ev = events[d.id] || [];
+  setHTML(c.hist, ev.length
+    ? ev.slice(0,6).map(e => '<div class="ev'+(e.acknowledged?' acked':'')+'">'
+        + '<span class="t">'+ago(e.t_start)+'</span>'
+        + '<span class="pk">'+Math.round((e.peak_level||0)*100)+'%</span>'
+        + '<span>'+(e.t_end ? Math.round(e.t_end-e.t_start)+'s'
+                            : '<i class="live">ongoing</i>')+'</span>'
+        + (e.acknowledged
+            ? '<span class="t" style="margin-left:auto">'
+              + (e.verdict || 'reviewed') + '</span>'
+            : '<span style="margin-left:auto;display:flex;gap:3px">'
+              + '<button title="a real deviation" onclick="ack('+e.id+',&quot;real&quot;)">real</button>'
+              + '<button title="a knock, movement, bad contact" onclick="ack('+e.id+',&quot;artifact&quot;)">artifact</button>'
+              + '<button title="cannot tell" onclick="ack('+e.id+',&quot;unsure&quot;)">?</button></span>')
+        + '</div>').join('')
+    : '<div class="none">no flags recorded</div>');
+
+  return c;
 }
 
-async function calib(id, action){
-  await fetch(`/api/calib/${id}/${action}`, {method:'POST'});
+// ---------------------------------------------------------------- actions
+
+async function req(url, method, body){
+  const opt = {method: method || 'POST', headers:{'Content-Type':'application/json'}};
+  if(method !== 'DELETE' || body) opt.body = JSON.stringify(body || {});
+  let r;
+  try{ r = await fetch(url, opt); }
+  catch(e){ alert(['Could not reach the master.', '', String(e)].join('\n')); return null; }
+  const j = await r.json().catch(() => ({}));
+  if(!r.ok){
+    // 404/405 on an endpoint this page knows about means the master is running
+    // older code: it serves this page from disk but its routes were fixed when
+    // the process started.
+    const missing = (r.status === 404 || r.status === 405);
+    alert(j.error ? j.error
+      : missing
+        ? ['The master has no such endpoint: HTTP ' + r.status + ' for '
+             + (opt.method || 'POST') + ' ' + url + '.', '',
+           'It is running older code than this page. Restart it:',
+           '    python3 -m anomaly.fleet'].join('\n')
+        : 'Request failed: HTTP ' + r.status + ' for ' + url);
+    return null;
+  }
+  return j;
+}
+const post = (url, body) => req(url, 'POST', body);
+
+async function calib(id, action){ await post(`/api/calib/${id}/${action}`); tick(); }
+
+async function assign(id, subject_id){
+  await post(`/api/devices/${id}/assign`, {subject_id: subject_id ? Number(subject_id) : null});
+  await refreshSubjects(); await tick(); refreshEvents();
+}
+
+async function ack(id, verdict){
+  await post(`/api/events/${id}/ack`, {verdict});
+  refreshEvents(); refreshSubjects();
+}
+
+async function renameDevice(id){
+  const d = devices.find(x => x.id === id);
+  const name = prompt('Name for this board (its id stays ' + id + '):', d ? d.name : '');
+  if(name === null) return;
+  await post(`/api/devices/${id}/rename`, {name});
   tick();
 }
 
-async function tick(){
-  try{
-    const r = await (await fetch('/api/devices')).json();
-    devices = r.devices;
-    $('sub').textContent = `${devices.length} device${devices.length===1?'':'s'} on `
-      + `${r.subnet}.0/24` + (r.scanning ? ' · scanning…' : '');
-    $('grid').innerHTML = devices.length
-      ? devices.map(card).join('')
-      : `<div class="empty">no devices found on ${r.subnet}.0/24<br><br>`
-        + `is a board powered and on this network?<br>`
-        + `it must answer <code>http://&lt;ip&gt;/health</code></div>`;
-  }catch(e){ $('sub').textContent = 'master unreachable'; }
+async function renameSubject(sid){
+  const s = subjects.find(x => x.id === sid);
+  if(!s) return;
+  const name = prompt('Name for ' + s.code + ':', s.display_name || '');
+  if(name === null) return;
+  const code = prompt('Code for this subject (used in results):', s.code);
+  if(code === null) return;
+  await post(`/api/subjects/${sid}/rename`, {name, code});
+  await refreshSubjects(); tick();
 }
-$('rescan').onclick = async () => { await fetch('/api/rescan',{method:'POST'}); tick(); };
-tick(); setInterval(tick, 1000);
+
+async function deleteSubject(sid){
+  const s = subjects.find(x => x.id === sid);
+  if(!s) return;
+  // spell out what goes: a subject is not just a name, it is every session,
+  // reading and flag recorded about that person.
+  const bits = [];
+  if(s.n_sessions)  bits.push(s.n_sessions + ' session' + (s.n_sessions===1?'':'s'));
+  if(s.n_readings)  bits.push(s.n_readings + ' reading' + (s.n_readings===1?'':'s'));
+  if(s.n_events)    bits.push(s.n_events + ' flag' + (s.n_events===1?'':'s'));
+  if(s.threshold)   bits.push('their calibrated baseline');
+  const on = devices.filter(d => d.subject && d.subject.id === sid).map(d => d.name || d.id);
+  const lines = ['Delete ' + s.code + (s.display_name ? ' · ' + s.display_name : '') + '?', ''];
+  lines.push(bits.length ? 'This permanently destroys ' + bits.join(', ') + '.'
+                         : 'Nothing has been recorded about them yet.');
+  if(on.length) lines.push('They are currently on ' + on.join(', ')
+                           + ', which will be left with nobody assigned.');
+  lines.push('', 'This cannot be undone.');
+  if(!confirm(lines.join('\n'))) return;
+  await req(`/api/subjects/${sid}`, 'DELETE');
+  await refreshSubjects(); await tick(); refreshEvents();
+}
+
+$('newsub').onclick = async () => {
+  const name = prompt('Subject name (the code is assigned automatically):');
+  if(name === null) return;
+  await post('/api/subjects', {name});
+  await refreshSubjects(); tick();
+};
+$('rescan').onclick = async () => { await post('/api/rescan'); tick(); };
+
+// ---------------------------------------------------------------- polling
+
+async function refreshSubjects(){
+  try{ subjects = (await (await fetch('/api/subjects')).json()).subjects; }catch(e){}
+}
+
+// events change far slower than the stream, so they get their own slower loop
+async function refreshEvents(){
+  for(const d of devices){
+    try{ events[d.id] = (await (await fetch(`/api/devices/${d.id}/events?limit=8`))
+                          .json()).events; }catch(e){}
+  }
+}
+
+// The people, listed independently of the hardware. A device card can only ever
+// show the subject assigned to it, so without this panel anybody not currently
+// on a board -- which is most of them -- could be neither renamed nor deleted.
+let panel = null;
+function subjectsPanel(){
+  if(!panel){
+    panel = document.createElement('div');
+    panel.className = 'card';
+    panel.innerHTML = '<div class="hist" style="margin:0;border:0;padding:0">'
+      + '<h3>Subjects</h3><div class="js-list"></div></div>';
+    panel.list = panel.querySelector('.js-list');
+  }
+  const where = {};
+  for(const d of devices) if(d.subject) where[d.subject.id] = d.name || d.id;
+  setHTML(panel.list, subjects.length ? subjects.map(s => {
+    const bits = [];
+    bits.push(s.threshold ? 'baseline ' + Number(s.threshold).toFixed(5) : 'no baseline');
+    if(s.n_sessions) bits.push(s.n_sessions + ' session' + (s.n_sessions===1?'':'s'));
+    if(s.n_events)   bits.push(s.n_events + ' flag' + (s.n_events===1?'':'s'));
+    bits.push(where[s.id] ? 'on ' + esc(where[s.id]) : 'not on a board');
+    return '<div class="srow"><div style="min-width:0;flex:1">'
+      + '<div class="sname"><b>' + esc(s.code) + '</b>'
+      + (s.display_name && s.display_name !== s.code ? ' · ' + esc(s.display_name) : '')
+      + '</div><div class="smeta">' + bits.join(' · ') + '</div></div>'
+      + '<button class="pen" title="Rename" onclick="renameSubject(' + s.id + ')">&#9998;</button>'
+      + '<button class="pen" title="Delete" onclick="deleteSubject(' + s.id + ')">&#128465;</button>'
+      + '</div>';
+  }).join('') : '<div class="none">none yet — use “New subject”</div>');
+  return panel;
+}
+
+let emptyEl = null;
+async function tick(){
+  let r;
+  try{ r = await (await fetch('/api/devices')).json(); }
+  catch(e){ setText($('sub'), 'master unreachable'); return; }
+  devices = r.devices;
+  const stale = $('stale');
+  if(r.api !== NEEDS_API){
+    stale.hidden = false;
+    setText(stale, 'This page expects API v' + NEEDS_API + ' but the master speaks v'
+      + (r.api || 1) + ' — it is running older code. Restart it: python3 -m anomaly.fleet');
+  } else if(!stale.hidden) stale.hidden = true;
+  setText($('sub'), `${devices.length} device${devices.length===1?'':'s'} on `
+    + `${r.subnet}.0/24 · ${subjects.length} subject${subjects.length===1?'':'s'}`
+    + (r.scanning ? ' · scanning…' : ''));
+
+  const grid = $('grid');
+  const p = subjectsPanel();
+  if(p.parentNode !== grid){ grid.innerHTML = ''; grid.appendChild(p); }
+
+  if(!devices.length){
+    for(const [, c] of cards) c.root.remove();
+    cards.clear();
+    if(!emptyEl){ emptyEl = document.createElement('div'); emptyEl.className = 'empty'; }
+    setHTML(emptyEl, `no devices found on ${esc(r.subnet)}.0/24<br><br>`
+      + `is a board powered and on this network?<br>`
+      + `it must answer <code>http://&lt;ip&gt;/health</code>`);
+    if(emptyEl.parentNode !== grid) grid.appendChild(emptyEl);
+    return;
+  }
+  if(emptyEl && emptyEl.parentNode) emptyEl.remove();
+
+  const seen = new Set();
+  for(const d of devices){
+    seen.add(d.id);
+    const c = updateCard(d);
+    if(c.root.parentNode !== grid) grid.appendChild(c.root);
+  }
+  for(const [id, c] of cards)             // a board that went away
+    if(!seen.has(id)){ c.root.remove(); cards.delete(id); }
+}
+
+refreshSubjects().then(tick).then(refreshEvents);
+setInterval(tick, 1000);
+setInterval(() => { refreshSubjects(); refreshEvents(); }, 5000);
 </script>

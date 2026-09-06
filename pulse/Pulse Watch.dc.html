@@ -30,55 +30,6 @@ input{font-family:inherit}
 <div style="min-height:100vh;background:#F6F8FB">
 
   <!-- ============ LOGIN ============ -->
-  <sc-if value="{{ showLogin }}" hint-placeholder-val="{{ true }}">
-    <div style="min-height:100vh;display:grid;grid-template-columns:{{ loginCols }}">
-      <sc-if value="{{ isWide }}" hint-placeholder-val="{{ true }}">
-        <div style="position:relative;overflow:hidden;background:linear-gradient(155deg,#E6F7F2 0%,#EEF6FF 55%,#F6F8FB 100%);padding:56px;display:flex;flex-direction:column;justify-content:space-between">
-          <div style="position:absolute;width:520px;height:520px;border-radius:999px;border:1.5px solid rgba(45,190,158,.18);right:-180px;top:-120px"></div>
-          <div style="position:absolute;width:360px;height:360px;border-radius:999px;border:1.5px solid rgba(91,141,239,.16);right:-60px;top:40px"></div>
-          <div style="position:relative;display:flex;align-items:center;gap:12px">
-            <div style="position:relative;width:38px;height:38px;flex:none">
-              <div style="position:absolute;inset:0;border-radius:999px;background:#2DBE9E;display:flex;align-items:center;justify-content:center"><div style="width:11px;height:11px;border-radius:999px;background:#fff"></div></div>
-              <div style="position:absolute;inset:0;border-radius:999px;border:2px solid #2DBE9E;animation:{{ brandRing }}"></div>
-            </div>
-            <span style="font-weight:800;font-size:19px;letter-spacing:-.01em">{{ brandName }}</span>
-          </div>
-          <div style="position:relative">
-            <div style="font-size:13px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#2DBE9E">Edge-AI early-warning monitor</div>
-            <div style="font-size:42px;font-weight:800;line-height:1.08;margin-top:16px;max-width:13ch;color:#1B2430;letter-spacing:-.02em">Calm, transparent monitoring.</div>
-            <div style="font-size:16px;color:#6B7787;margin-top:18px;max-width:36ch;line-height:1.6">Watches physiological signals on-device and flags deviations from a person's own normal — for a human to review.</div>
-          </div>
-          <div style="position:relative;font-size:12px;color:#9AA6B2;max-width:42ch;line-height:1.6">An early-warning aid, not a diagnostic device. Everything runs locally; every flag is reviewed by a person.</div>
-        </div>
-      </sc-if>
-      <div style="display:flex;align-items:center;justify-content:center;padding:32px;background:#F6F8FB">
-        <div style="width:100%;max-width:372px">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:30px">
-            <div style="position:relative;width:32px;height:32px;flex:none">
-              <div style="position:absolute;inset:0;border-radius:999px;background:#2DBE9E;display:flex;align-items:center;justify-content:center"><div style="width:9px;height:9px;border-radius:999px;background:#fff"></div></div>
-            </div>
-            <span style="font-weight:800;font-size:17px;letter-spacing:-.01em">{{ brandName }}</span>
-          </div>
-          <div style="font-size:26px;font-weight:700;letter-spacing:-.01em">Welcome back</div>
-          <div style="font-size:15px;color:#6B7787;margin-top:4px">Sign in to your monitor</div>
-          <div style="margin-top:26px;display:flex;flex-direction:column;gap:14px">
-            <label style="display:block">
-              <span style="font-size:12px;font-weight:600;color:#6B7787">Email</span>
-              <input type="email" value="caregiver@clinic.health" style="width:100%;margin-top:6px;padding:12px 14px;border:1px solid #E6EBF2;border-radius:12px;font-size:15px;background:#fff;outline:none">
-            </label>
-            <label style="display:block">
-              <span style="font-size:12px;font-weight:600;color:#6B7787">Password</span>
-              <input type="password" value="demodemo" style="width:100%;margin-top:6px;padding:12px 14px;border:1px solid #E6EBF2;border-radius:12px;font-size:15px;background:#fff;outline:none">
-            </label>
-          </div>
-          <button onClick="{{ onSignIn }}" style="width:100%;margin-top:22px;padding:14px;border-radius:12px;background:#2DBE9E;color:#fff;font-weight:700;font-size:15px;box-shadow:0 6px 16px rgba(45,190,158,.28)">Sign in</button>
-          <button onClick="{{ onDemo }}" style="width:100%;margin-top:10px;padding:14px;border-radius:12px;background:#fff;border:1px solid #E6EBF2;color:#1B2430;font-weight:600;font-size:15px">Continue to demo →</button>
-          <div style="font-size:12px;color:#9AA6B2;line-height:1.6;margin-top:26px;text-align:center">An early-warning aid, not a diagnostic device.<br>Every flag is reviewed by a person.</div>
-        </div>
-      </div>
-    </div>
-  </sc-if>
-
   <!-- ============ APP ============ -->
   <sc-if value="{{ showApp }}" hint-placeholder-val="{{ false }}">
     <div style="display:flex;flex-direction:row;min-height:100vh;background:#F6F8FB">
@@ -112,9 +63,9 @@ input{font-family:inherit}
         <!-- TOPBAR -->
         <header style="display:flex;align-items:center;gap:14px;padding:0 24px;height:64px;background:rgba(255,255,255,.86);backdrop-filter:blur(8px);border-bottom:1px solid #E6EBF2;position:sticky;top:0;z-index:30">
           <div style="display:flex;align-items:center;gap:11px;min-width:0">
-            <div style="width:34px;height:34px;border-radius:999px;background:#E6F7F2;color:#2DBE9E;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:none">{{ patientInitials }}</div>
+            <div style="width:34px;height:34px;border-radius:999px;background:#E6F7F2;color:#2DBE9E;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:none">{{ subjectInitials }}</div>
             <div style="min-width:0">
-              <div style="font-weight:700;font-size:14px;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ patientName }}</div>
+              <div style="font-weight:700;font-size:14px;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ subjectName }}</div>
               <div style="font-size:11px;color:#9AA6B2;line-height:1.1">monitored person</div>
             </div>
           </div>
@@ -130,9 +81,6 @@ input{font-family:inherit}
           <button onClick="{{ onOpenMethod }}" style="display:flex;align-items:center;gap:7px;padding:8px 13px;border-radius:10px;background:#fff;border:1px solid #E6EBF2;font-weight:600;font-size:13px;color:#1B2430">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5m0 14 5-4 4 3 7-7M4 19h16"></path></svg>
             <span style="white-space:nowrap">Method</span>
-          </button>
-          <button onClick="{{ onLogout }}" title="Sign out" style="width:36px;height:36px;border-radius:10px;background:#fff;border:1px solid #E6EBF2;display:flex;align-items:center;justify-content:center;color:#6B7787;flex:none">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"></path></svg>
           </button>
         </header>
 
@@ -311,49 +259,13 @@ input{font-family:inherit}
             </div>
           </sc-if>
 
-          <!-- ===== PATIENTS (stub) ===== -->
-          <sc-if value="{{ isPatients }}" hint-placeholder-val="{{ false }}">
-            <div style="max-width:1200px;margin:0 auto;display:flex;flex-direction:column;gap:18px;animation:fadeup .42s cubic-bezier(.4,0,.2,1) both">
-              <div style="display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap">
-                <div>
-                  <div style="font-size:24px;font-weight:800;letter-spacing:-.01em">Patients</div>
-                  <div style="font-size:13px;color:#6B7787;margin-top:3px">{{ patientsCount }} monitored · {{ flaggedCount }} need a glance</div>
-                </div>
-                <div style="flex:1"></div>
-                <span style="display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;background:#FFF7E8;border:1px solid #F6E6C0;font-size:11px;font-weight:700;letter-spacing:.03em;color:#B8862A"><span style="width:7px;height:7px;border-radius:999px;background:#F4B740"></span>VISION · MOCK DATA</span>
-              </div>
-              <div style="display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(248px,1fr))">
-                <sc-for list="{{ patientsVM }}" as="p" hint-placeholder-count="4">
-                  <button onClick="{{ p.onClick }}" style="text-align:left;background:#fff;border:1px solid #E6EBF2;border-radius:18px;box-shadow:0 6px 20px rgba(16,24,40,.06);padding:18px;display:flex;flex-direction:column;gap:15px;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease" style-hover="transform:translateY(-3px);box-shadow:0 16px 34px rgba(16,24,40,.11);border-color:#D7DEE8">
-                    <div style="display:flex;align-items:center;gap:11px">
-                      <div style="width:40px;height:40px;border-radius:999px;background:#F0F4F9;color:#6B7787;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex:none">{{ p.initials }}</div>
-                      <div style="min-width:0;flex:1">
-                        <div style="font-weight:700;font-size:15px;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ p.name }}</div>
-                        <div style="font-size:12px;color:#9AA6B2">monitored person</div>
-                      </div>
-                      <span style="width:9px;height:9px;border-radius:999px;background:{{ p.qColor }};flex:none" title="signal"></span>
-                    </div>
-                    <div style="display:inline-flex;align-self:flex-start;align-items:center;gap:7px;padding:5px 11px;border-radius:999px;background:{{ p.statusSoft }}">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="{{ p.statusColor }}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ p.statusIcon }}"></path></svg>
-                      <span style="font-size:12px;font-weight:700;color:{{ p.statusColor }}">{{ p.statusWord }}</span>
-                    </div>
-                    <div style="display:flex;align-items:flex-end;justify-content:space-between;border-top:1px solid #F0F4F9;padding-top:13px">
-                      <div><div style="font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1">{{ p.bpm }}</div><div style="font-size:11px;color:#9AA6B2;margin-top:2px">bpm</div></div>
-                      <div style="font-size:12px;color:#6B7787;text-align:right;max-width:60%">{{ p.last }}</div>
-                    </div>
-                  </button>
-                </sc-for>
-              </div>
-              <div style="font-size:12px;color:#9AA6B2;padding-top:4px">Roster is a product-vision view on mock data — the device streams one person today. Flagged people sort to the top.</div>
-            </div>
-          </sc-if>
           <!-- ===== HISTORY (stub) ===== -->
           <sc-if value="{{ isHistory }}" hint-placeholder-val="{{ false }}">
             <div style="max-width:1100px;margin:0 auto;display:flex;flex-direction:column;gap:18px;animation:fadeup .42s cubic-bezier(.4,0,.2,1) both">
               <div style="display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap">
                 <div>
                   <div style="font-size:24px;font-weight:800;letter-spacing:-.01em">History</div>
-                  <div style="font-size:13px;color:#6B7787;margin-top:3px">{{ patientName }} · {{ needsCount }} events need review</div>
+                  <div style="font-size:13px;color:#6B7787;margin-top:3px">{{ subjectName }} · {{ needsCount }} events need review</div>
                 </div>
                 <div style="flex:1"></div>
                 <button onClick="{{ onAskClear }}" style="display:inline-flex;align-items:center;gap:7px;padding:8px 14px;border-radius:10px;background:#fff;border:1px solid #E6EBF2;color:#6B7787;font-weight:600;font-size:13px;cursor:pointer">
@@ -628,10 +540,10 @@ class Component extends DCLogic {
   PERIOD = 180;
 
   state = {
-    authed:false, route:'monitor', methodOpen:false, calibOpen:false, confirmClear:false,
+    route:'monitor', role:'device', methodOpen:false, calibOpen:false, confirmClear:false,
     mode: (typeof window!=='undefined' && window.innerWidth<700)?'phone':((typeof window!=='undefined' && window.innerWidth<1024)?'tablet':'desktop'),
     running:false, connected:false, useLive:false, source:'replay', deviceConnected:false,
-    subject:'S5', patientName:'Aisha N.',
+    subject:'S5', subjectName:'S05',
     elapsed:0, buf:0, win:3840, fs:64, winS:60,
     level:0, flag:false, bpm:null, spo2:null, motion:0, quality:1, qualityLabel:'good', label:'calm',
     thrLevel:0.42, sensitivity:0.5, preset:'Balanced',
@@ -642,9 +554,9 @@ class Component extends DCLogic {
     noteOpen:null,
     // restore a persisted session so a browser refresh doesn't wipe everything — see persist()
     ...(()=>{ try{ const s=JSON.parse(localStorage.getItem('pulsewatch_v1')||'{}');
-      return { authed:!!s.authed, route:s.route||'monitor',
+      return { route:(s.route==='patients'?'monitor':(s.route||'monitor')),
                events:Array.isArray(s.events)?s.events:[],
-               patientName:s.patientName||'Aisha N.' };
+               subjectName:s.subjectName||'S05' };
     }catch(e){ return {}; } })()
   };
 
@@ -661,10 +573,10 @@ class Component extends DCLogic {
     // restore the open-episode tracker so a refresh CONTINUES the episode (no duplicate row)
     try{ const s=JSON.parse(localStorage.getItem('pulsewatch_v1')||'{}'); this.curEvent = s.curEvent||null; }catch(e){ this.curEvent=null; }
     if(!this.curEvent){ const ev=this.state.events; if(ev.some(e=>e&&e.dur==='ongoing')) this.setState({events:ev.map(e=>(e&&e.dur==='ongoing')?{...e,dur:'—'}:e)}); }
-    if(this.state.authed){ this.connectLive(); }   // restored a logged-in session → reconnect live
+    this.connectLive();   // there is nothing to sign in to; go straight to the stream
     this._raf = requestAnimationFrame(this.frame);
   }
-  persist(){ try{ localStorage.setItem('pulsewatch_v1', JSON.stringify({ authed:this.state.authed, route:this.state.route, events:this.state.events, patientName:this.state.patientName, curEvent:this.curEvent })); }catch(e){} }
+  persist(){ try{ localStorage.setItem('pulsewatch_v2', JSON.stringify({ route:this.state.route, events:this.state.events, subjectName:this.state.subjectName, curEvent:this.curEvent })); }catch(e){} }
   componentWillUnmount(){ cancelAnimationFrame(this._raf); window.removeEventListener('resize',this._onResize); window.removeEventListener('beforeunload',this._onUnload); this.persist(); if(this.ws){try{this.ws.close()}catch(e){}} }
 
   // ---------- scenario ----------
@@ -731,7 +643,7 @@ class Component extends DCLogic {
         dur:'ongoing', durSec:0, status:'needs', note:'',
         bpm:(c.bpm!=null?c.bpm:'—'), spo2:(c.spo2!=null?c.spo2:'—'),
         motion:(c.motion!=null&&c.motion>=0.12)?'active':'still' };
-      this.setState({ events:[ev, ...this.state.events].slice(0,20) });
+      this.setState({ events:[ev, ...this.state.events].slice(0,this.eventCap()) });
     }
     if(this.curEvent && this.smooth>this.curEvent.peak) this.curEvent.peak=this.smooth;
     if(!flag && this.curEvent){
@@ -793,7 +705,7 @@ class Component extends DCLogic {
   }
   fallbackMock(msg){ this.ws=null; this.setState({useLive:false, source:'replay', deviceConnected:false, connected:true, running:true, toast:msg+' — using demo replay'}); clearTimeout(this._tT); this._tT=setTimeout(()=>this.setState({toast:null}),3600); }
   onWsMsg(m){
-    if(m.type==='hello'){ const sv=m.sensitivity; const st={ fs:m.fs||64, winS:m.win_s||60, win:(m.fs||64)*(m.win_s||60), thrLevel:m.thr_level??0.42, subject:m.subject||'S5', running:!!m.running, source:m.source||'device', deviceConnected:m.device_connected!==false }; if(sv!=null){ st.sensitivity=sv; st.preset=sv>=0.64?'Cautious':(sv<=0.37?'Strict':'Balanced'); } this.setState(st); }
+    if(m.type==='hello'){ const sv=m.sensitivity; const st={ role:m.role||'device', fs:m.fs||64, winS:m.win_s||60, win:(m.fs||64)*(m.win_s||60), thrLevel:m.thr_level??0.42, subject:m.subject||'S5', subjectName:m.subject||this.state.subjectName, running:!!m.running, source:m.source||'device', deviceConnected:m.device_connected!==false }; if(sv!=null){ st.sensitivity=sv; st.preset=sv>=0.64?'Cautious':(sv<=0.37?'Strict':'Balanced'); } this.setState(st); }
     else if(m.type==='f'){
       if(Array.isArray(m.bvp)){ for(const v of m.bvp) this.wave.push(v); if(this.wave.length>960) this.wave.splice(0,this.wave.length-960); }
       const q = (m.quality!=null)?m.quality:0.9;
@@ -933,8 +845,12 @@ class Component extends DCLogic {
   dur(s){ s=Math.max(0,Math.round(s)); if(s<60) return s+'s'; return Math.floor(s/60)+'m '+(s%60)+'s'; }
 
   // ---------- actions ----------
+  // How much history this page keeps. The board serves this same file, and an
+  // ESP32 has neither the RAM nor the business holding a long clinical record:
+  // it keeps the last few flags so somebody looking at the device can see what
+  // just happened, and the host keeps the record.
+  eventCap(){ return this.state.role==='host' ? 20 : 5; }
   go(r){ this.setState({route:r}); }
-  doLogin(){ this.setState({authed:true, route:'monitor'}); this.connectLive(); /* live-first; connectLive() falls back to the built-in mock replay if /ws is unreachable */ }
   start(){ if(this.state.useLive&&this.ws){ try{this.ws.send(JSON.stringify({cmd:'start'}))}catch(e){} } this.setState({running:true, connected:true}); }
   pause(){ if(this.state.useLive&&this.ws){ try{this.ws.send(JSON.stringify({cmd:'pause'}))}catch(e){} } this.setState({running:false}); }
   reset(){ this.simClock=0; this.phase=0; this.smooth=0; this.wave=[]; this.levelHist=[]; this.flagSince=this.calmSince=null; this.curEvent=null; this.lastHist=0; if(this.state.useLive&&this.ws){ try{this.ws.send(JSON.stringify({cmd:'reset'}))}catch(e){} } this.setState({events:[], elapsed:0, buf:0, level:0, flag:false, bpm:null, statusState:this.state.running?'warming':'paused'}); }
@@ -952,7 +868,6 @@ class Component extends DCLogic {
   calibCancel(){ if(this.state.useLive&&this.ws){ try{this.ws.send(JSON.stringify({cmd:'calib_cancel'}))}catch(e){} }
     this.setState({calibOpen:false}); }
 
-  openPatient(p){ this.setState({patientName:p.name, route:'monitor'}); }
   reviewAct(id, action){
     const list=this.state.events.map(e=>{ if(e.id!==id) return e;
       if(action==='ack') return {...e,status:'reviewed'};
@@ -1030,10 +945,8 @@ class Component extends DCLogic {
 
   renderVals(){
     const st=this.state, m=st.mode, isWide=(m!=='phone');
-    const auth=st.authed;
     const navData=[
       {key:'monitor',label:'Monitor',iconPath:'M3 12h4l2-6 4 12 2-6h4'},
-      {key:'patients',label:'Patients',iconPath:'M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6 M3.5 19a5.5 5.5 0 0 1 11 0 M16 5.2a3 3 0 0 1 0 5.8 M21 19a5.5 5.5 0 0 0-4-5.3'},
       {key:'history',label:'History',iconPath:'M12 3a9 9 0 1 0 9 9 M12 3v0a9 9 0 0 0-9 9 M12 7v5l3 2 M3 5l1 4 4-1'},
       {key:'settings',label:'Settings',iconPath:'M5 8h9 M18 8h1 M5 16h1 M10 16h9 M14 5v6 M9 13v6'}
     ];
@@ -1065,20 +978,6 @@ class Component extends DCLogic {
     const sourceLabel = sourceLive?'Live device':('Replay · '+st.subject);
     const connected = sourceLive? st.connected : true;
 
-    const stPres={
-      flagged:{word:'Flagged',color:'#F2645A',soft:'#FDECEA',icon:'M12 4l9 16H3z M12 10v4 M12 17h.01'},
-      warming:{word:'Warming up',color:'#5B8DEF',soft:'#ECF2FE',icon:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l3 2'},
-      calm:{word:'Calm',color:'#2BAE73',soft:'#E9F9F0',icon:'M20 6.5L9.5 17 4 11.5'}
-    };
-    // single live patient = the connected stream (this is a single-device demo)
-    const liveStatus = st.statusState==='flagged'?'flagged':(st.statusState==='warming'?'warming':'calm');
-    const liveLast = liveStatus==='flagged' ? ('flagged '+(st.flagTimeStr||'now'))
-                   : liveStatus==='warming' ? 'warming up'
-                   : (st.statusState==='paused'?'paused':(st.statusState==='offline'?'disconnected':(st.statusState==='noContact'?'no finger on sensor':'all calm')));
-    const livePatient = {id:'live', name:st.patientName, status:liveStatus,
-      bpm:(st.bpm==null?null:st.bpm), last:liveLast, q:st.qualityLabel};
-    const patientsVM=[livePatient].map(p=>{ const s=stPres[p.status]; return {id:p.id,name:p.name,initials:p.name.split(' ').map(x=>x[0]).join('').slice(0,2),statusWord:s.word,statusColor:s.color,statusSoft:s.soft,statusIcon:s.icon,bpm:p.bpm==null?'—':p.bpm,last:p.last,qColor:p.q==='good'?'#3DCB7F':(p.q==='fair'?'#F4B740':'#94A3B8'),isActive:true,onClick:()=>this.openPatient(p)}; });
-    const flaggedCount = liveStatus==='flagged'?1:0;
 
     const revMap={needs:{label:'Needs review',color:'#E0982A',soft:'#FEF6E6'},reviewed:{label:'Reviewed',color:'#2BAE73',soft:'#E9F9F0'},dismissed:{label:'Dismissed',color:'#7C8898',soft:'#EEF1F5'}};
     const reviewVM=st.events.map(e=>{ const r=revMap[e.status]||revMap.needs; return {id:e.id,time:e.time,date:e.date,peak:e.peakNum+'%',dur:e.dur,when:e.date+' '+e.time+(e.dur==='ongoing'?'':' · lasted '+e.dur),statusLabel:r.label,statusColor:r.color,statusSoft:r.soft,bpm:e.bpm,spo2:e.spo2,motion:e.motion,note:e.note,hasNote:!!e.note,isNeeds:e.status==='needs',noteOpen:st.noteOpen===e.id,onAck:()=>this.reviewAct(e.id,'ack'),onNot:()=>this.reviewAct(e.id,'not'),onNote:()=>this.reviewAct(e.id,'note'),onSaveNote:(ev)=>{ if(ev.key==='Enter'){ this.saveNote(e.id,ev.target.value);} }}; });
@@ -1099,22 +998,21 @@ class Component extends DCLogic {
     return {
       brandName: this.props.appName || 'Pulse Watch',
       brandRing: this.reduceMotion?'none':'ringpulse 2.6s ease-out infinite',
-      showLogin: !auth, showApp: auth,
-      isWide, loginCols: isWide?'1.05fr 1fr':'1fr',
-      onSignIn:()=>this.doLogin(), onDemo:()=>this.doLogin(),
+      showApp: true,
+      isWide,
       // shell
       navStyle:this.navStyle(),
       navItemsWrap: m==='phone'?'display:flex;flex:1;gap:2px':'display:flex;flex-direction:column;gap:5px;margin-top:14px',
       navItems,
       mainStyle: m==='phone'?'flex:1;padding:16px;padding-bottom:84px':'flex:1;padding:24px',
       // topbar
-      patientName: st.patientName, patientInitials: st.patientName.split(' ').map(x=>x[0]).join('').slice(0,2),
+      subjectName: st.subjectName, subjectInitials: st.subjectName.split(' ').map(x=>x[0]).join('').slice(0,2),
       sourceLabel, srcBg: sourceLive?'#E9F9F0':'#F0F4F9', srcDot: sourceLive?'#2BAE73':'#7C8898', srcText: sourceLive?'#2BAE73':'#6B7787',
       connColor: connected?'#3DCB7F':'#94A3B8', connText: connected?'Connected':'Offline',
-      onOpenMethod:()=>this.setState({methodOpen:true}), onLogout:()=>{ try{ localStorage.removeItem('pulsewatch_v1'); }catch(e){} this.setState({authed:false, running:false, events:[]}); },
+      onOpenMethod:()=>this.setState({methodOpen:true}),
       confirmClear: st.confirmClear, onAskClear:()=>this.askClear(), onCancelClear:()=>this.cancelClear(), onConfirmClear:()=>this.clearHistory(),
       // routes
-      isMonitor: st.route==='monitor', isPatients: st.route==='patients', isHistory: st.route==='history', isSettings: st.route==='settings',
+      isMonitor: st.route==='monitor', isHistory: st.route==='history', isSettings: st.route==='settings',
       monGrid: (m==='phone'||m==='tablet')?'1fr':'minmax(0,1.18fr) minmax(0,1fr)',
       twoCol: (m==='phone')?'1fr':'minmax(0,1.25fr) minmax(0,1fr)',
       // hero
@@ -1149,7 +1047,6 @@ class Component extends DCLogic {
       onOpenCalib:()=>this.openCalib(), showCalibPrompt: st.route==='monitor' && !this._personalized,
       // overlays
       // patients
-      patientsVM, flaggedCount, patientsCount: patientsVM.length,
       // history
       reviewVM, needsCount, reviewCount: st.events.length, historyRef:this.historyRef,
       // settings

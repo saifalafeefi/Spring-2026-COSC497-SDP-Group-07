@@ -173,13 +173,29 @@ bool webStarted = false;
 String devId = "pulse-unknown";
 
 // The sensitivity slider lives in the dashboards, but the MODEL is on the master,
-// so the board is only a courier: it stores what the user picked, reports it in
-// every frame, and the master turns it into an actual threshold and pushes the
-// resulting level back for the UI to draw. Before this the board dropped the
-// command entirely and reported a hardcoded 0.42, so the threshold line on screen
-// had nothing to do with when the flag actually fired.
+// so the board stores what the user picked and reports it in every frame; the
+// master reads it back and decides the flag with it.
+//
+// Where the threshold LINE sits is a different question, and it is pure
+// arithmetic on the slider -- no model needed -- so the board answers it itself.
+// It used to echo whatever the master had last pushed to /flag, which meant a
+// drag was answered with the PREVIOUS threshold and the line snapped back to the
+// 0.42 default: the master only pushes as a side effect of a scoring tick, so an
+// uncalibrated board (no push at all), a lifted finger or a refilling window left
+// it stuck there for good.
 float hostSens = 0.5f;          // 0..1 from the slider
-float hostThrLevel = 0.42f;     // where the master's threshold sits, 0..1
+
+// slider -> where the flag threshold sits on the 0..1 level scale. MUST stay
+// identical to sens_to_level() in anomaly/fleet.py, Engine.set_sensitivity in
+// anomaly/serve.py and sensLevel() in both dashboards -- the master decides the
+// flag with that map, so a board drawing a different line would be drawing a
+// line the model does not flag at.
+static inline float sensToLevel(float s) {
+  float lvl = 0.62f - 0.40f * s;
+  return lvl < 0.12f ? 0.12f : (lvl > 0.85f ? 0.85f : lvl);
+}
+
+float hostThrLevel = 0.42f;     // == sensToLevel(0.5f), kept in step with hostSens
 String wifiSsid;
 String wifiPass;
 bool wifiWanted = false;         // credentials exist, so keep trying
@@ -883,6 +899,9 @@ void webBegin() {
     }
     hostFlag = f;
     hostLevel = constrain(l, 0, 100);
+    // the master's own copy of the same sensToLevel() map. It should already
+    // match what the slider set; accepted so the master stays the authority on
+    // the number the flag was actually decided with.
     if (req->hasParam("t")) {         // where the master's threshold sits, 0-100
       int t = req->getParam("t")->value().toInt();
       hostThrLevel = constrain(t, 0, 100) / 100.0f;
@@ -929,6 +948,8 @@ void webBegin() {
           float sv = atof(v + 1);
           if (sv >= 0.0f && sv <= 1.0f) {
             hostSens = sv;
+            hostThrLevel = sensToLevel(hostSens);   // answer with the NEW line,
+                                                    // not the master's last one
             char thr[128];
             snprintf(thr, sizeof(thr),
                      "{\"type\":\"thr\",\"sensitivity\":%.3f,\"thr_level\":%.3f,\"threshold\":0}",
@@ -942,9 +963,13 @@ void webBegin() {
     if (type == WS_EVT_CONNECT) {
       Serial.print("# ws client ");
       Serial.println(client->id());
-      char hello[320];
+      char hello[384];
       snprintf(hello, sizeof(hello),
-               "{\"type\":\"hello\",\"fs\":%d,\"win_s\":60,\"disp\":%d,\"infer_s\":1,"
+               // "role" tells the dashboard which of us is serving it. the same
+               // page is baked into this board and served by the host, and the
+               // board has no business keeping a long history -- so it says so
+               // rather than the page guessing from the URL.
+               "{\"type\":\"hello\",\"role\":\"device\",\"fs\":%d,\"win_s\":60,\"disp\":%d,\"infer_s\":1,"
                "\"subject\":\"%s\",\"running\":true,\"source\":\"device\","
                "\"calibrated_on\":\"none\",\"model\":false,\"device_connected\":true,"
                "\"device_port\":\"esp32\",\"sensitivity\":%.3f,\"thr_level\":%.3f,"

@@ -56,3 +56,6 @@ sketch_aug3a/.theia/
 # 421 KB that would churn on every UI tweak, and one command rebuilds it --
 # but the sketch will NOT compile until you run that command once.
 sketch_aug3a/web_assets.h
+
+# --- the master's store: subject data, never committed ---
+/data

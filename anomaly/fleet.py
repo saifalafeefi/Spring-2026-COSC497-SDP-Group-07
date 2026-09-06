@@ -42,11 +42,32 @@ from collections import deque
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 
+from . import quality
+from .db import DEFAULT_PATH as DB_PATH, Db, import_legacy_scorers
 from .infer import SAVE_DIR
 from .wesad import FS
 
 WIN = 60 * FS
 HTTP_TIMEOUT = 1.0
+
+# The roster page is read from disk on every request, but these routes are fixed
+# when the process starts. Edit both and an already-running master serves the NEW
+# page against its OLD routes -- the page calls an endpoint that does not exist
+# yet and the browser reports a bare "failed". Bump this whenever a route is
+# added or changed; the page checks it and says plainly that a restart is due.
+API_VERSION = 3
+
+# how long a board can go without a finger on it before its session is over.
+# generous on purpose: a session is a stretch of monitoring, and closing one
+# every time somebody scratches their nose would shred the history into confetti.
+SESSION_IDLE_S = 120.0
+
+# where the waveform behind each flag is kept, and whether to keep it at all.
+# the master already holds the raw signal in RAM to score it, so this stores
+# nothing new -- but it is the difference between a reviewable flag and a
+# number nobody can check.
+FLAG_DIR = os.path.join(os.path.dirname(DB_PATH), "flags")
+RECORD_FLAGS = True
 
 # Every network call here is blocking urllib, so it MUST run off the event loop:
 # a 2 s push that stalls the loop stalls every other device's stream too. The
@@ -145,19 +166,16 @@ def push_flag(ip: str, flag: bool, level: float, thr_level: float) -> bool:
         return False
 
 
-def scorer_path(dev_id: str) -> str:
-    return os.path.join(SAVE_DIR, f"scorer_{dev_id}.npz")
-
-
 # ----------------------------------------------------------------- one device
 
 class Device:
-    """one board: its websocket, its scorer, its calibration session."""
+    """one board: its websocket, whoever is wearing it, and their baseline."""
 
-    def __init__(self, dev_id: str, ip: str, det):
+    def __init__(self, dev_id: str, ip: str, det, db):
         self.id = dev_id
         self.ip = ip
-        self.det = det                    # LiveAnomalyDetector, thresholds swapped per device
+        self.det = det                    # LiveAnomalyDetector, thresholds swapped per subject
+        self.db = db
         self.buf: deque = deque(maxlen=WIN)
         self.ema = None
         self.level = None
@@ -167,52 +185,129 @@ class Device:
         self.spo2 = None
         self.contact = False
         self.last_seen = 0.0
+        self.last_contact = 0.0           # monotonic, for the idle-session timer
         self.connected = False
         self.pushes = 0
         self.fails = 0
         self.calib = None                 # a CalibSession while one is running
+        self.ws = None                    # live socket, for pushing a new default back
         self.sens = 0.5                   # slider position, mirrored from the board
         self.thr_level = 0.42             # where that puts the threshold, 0-1
         self.lost_since = None            # when contact was last lost
-        self.thresholds = None            # (threshold, lo, hi) once calibrated
-        self.load_scorer()
+        self.thresholds = None            # (threshold, lo, hi) from the subject's baseline
+        self.subject = None               # the assigned subject row, or None
+        self.session_id = None            # the open monitor session, or None
+        self.event_id = None              # the flag episode in progress, or None
+        self.name = dev_id                # human label, falls back to the id
+        self.quality = None               # 0-1 for the last window assessed
+        self.quality_note = ""            # why it was refused, if it was
+        self.refresh()
 
-    # ---- per-device calibration ----
+    # ---- who is wearing this, and what is normal for them ----
 
-    def load_scorer(self) -> bool:
-        p = scorer_path(self.id)
-        if not os.path.exists(p):
-            self.thresholds = None
-            return False
-        z = np.load(p)
-        self.thresholds = (float(z["threshold"]), float(z["ref_lo"]), float(z["ref_hi"]))
-        return True
-
-    def save_scorer(self, threshold: float, lo: float, hi: float, n: int):
-        import datetime as dt
-        np.savez(scorer_path(self.id), threshold=threshold, ref_lo=lo, ref_hi=hi,
-                 win_len=int(WIN), source="device", n_windows=n, fs=int(FS),
-                 device_id=self.id,
-                 created=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"))
-        self.thresholds = (threshold, lo, hi)
-        # put the slider where "balanced" reproduces the calibrated p90, so the
-        # default behaviour after calibrating is exactly 90% specificity.
-        lvl = (threshold - lo) / (hi - lo + 1e-9)
-        self.sens = float(np.clip((0.62 - lvl) / 0.40, 0.0, 1.0))
-        self.thr_level = sens_to_level(self.sens)
+    def refresh(self):
+        """re-read this board's label, its wearer and their baseline. cheap, and
+        called whenever any of them could have changed rather than cached and
+        hoped -- the roster polls once a second and must not show a stale name."""
+        row = self.db.device(self.id)
+        self.name = (row["name"] if row else None) or self.id
+        self.subject = self.db.assigned_subject(self.id)
+        b = self.db.active_baseline(self.subject["id"]) if self.subject else None
+        self.thresholds = (b["threshold"], b["ref_lo"], b["ref_hi"]) if b else None
+        self.baseline = b
 
     @property
-    def calibrated(self) -> bool:
-        return self.thresholds is not None
+    def scoring(self) -> bool:
+        """a verdict needs both: a person to attribute it to, and their calm.
+        without a subject we would be judging someone against nobody; without a
+        baseline, against someone else's body."""
+        return self.subject is not None and self.thresholds is not None
 
-    def score_window(self) -> float:
-        return self.det.score(np.fromiter(self.buf, dtype=np.float32, count=WIN))
+    async def send_sens(self, sens: float):
+        """move the board's slider, and ours with it."""
+        self.sens = round(float(np.clip(sens, 0.0, 1.0)), 3)   # 3 dp == the board's echo
+        self.thr_level = sens_to_level(self.sens)
+        if self.ws is None:
+            return False
+        try:
+            await self.ws.send(json.dumps({"cmd": "set_sensitivity", "value": self.sens}))
+            return True
+        except Exception:
+            return False
 
-    def apply(self, raw: float):
-        """turn a raw reconstruction error into a level and a flag for THIS user."""
+    # ---- sessions open and close on their own ----
+
+    def ensure_session(self):
+        """contact + a subject = a session, with nobody pressing anything.
+
+        the operator has no start button on purpose: detection is meant to be
+        continuous, so a session is a consequence of someone wearing the board,
+        not a mode somebody remembered to enter.
+        """
+        if self.session_id is not None or not self.scoring:
+            return
+        self.session_id = self.db.open_session(
+            self.subject["id"], self.id, "monitor",
+            model_id=getattr(self.det, "model_id", None), sens=self.sens)
+
+    def end_session(self):
+        if self.event_id is not None:
+            self.db.close_event(self.event_id)
+            self.event_id = None
+        if self.session_id is not None:
+            self.db.close_session(self.session_id)
+            self.session_id = None
+
+    def commit_calibration(self, r: dict) -> float:
+        """turn a finished calm collection into this SUBJECT's baseline, and say
+        where the slider has to sit to reproduce it.
+
+        the collection gets its own session row spanning the windows it took, so
+        a threshold can always be traced back to the calm it came from. the
+        monitor session ends here and the next frame with contact opens a fresh
+        one -- readings scored against the old baseline do not belong in the same
+        session as readings scored against the new one.
+        """
+        started = time.time() - (time.monotonic() - self.calib.t0)
+        self.end_session()
+        sess = self.db.record_session(
+            self.subject["id"], self.id, "calibration", started, time.time(),
+            model_id=getattr(self.det, "model_id", None),
+            notes=f"{r['n']} calm windows")
+        self.db.save_baseline(self.subject["id"], r["threshold"], r["ref_lo"], r["ref_hi"],
+                              n_windows=r["n"], fs=int(FS), win_len=int(WIN),
+                              session_id=sess,
+                              model_id=getattr(self.det, "model_id", None),
+                              source="device")
+        self.refresh()
+        # where "balanced" reproduces the calibrated p90, so the default operating
+        # point right after calibrating is exactly 90% specificity.
+        lvl = (r["threshold"] - r["ref_lo"]) / (r["ref_hi"] - r["ref_lo"] + 1e-9)
+        return float(np.clip((0.62 - lvl) / 0.40, 0.0, 1.0))
+
+    def score_window(self):
+        """assess the window, then score what survives.
+
+        returns (score, quality, reason). a refused window scores None: holding
+        the previous verdict is honest, inventing one from a damaged window is
+        not. on clean pulse this stage is a no-op -- verified bit-identical on
+        28 of 29 WESAD windows -- so it costs nothing when nothing is wrong.
+        """
+        w = np.fromiter(self.buf, dtype=np.float32, count=WIN)
+        q = quality.assess(w)
+        if not q["usable"]:
+            return None, q["quality"], q["reason"]
+        return self.det.score(q["window"]), q["quality"], ""
+
+    def apply(self, raw, q=None):
+        """turn a raw reconstruction error into a level and a flag for THIS person,
+        and record it. this is the only place a reading or an event is written."""
+        self.quality = q
+        if raw is None:              # window refused; hold, do not guess
+            return
         self.ema = raw if self.ema is None else 0.65 * self.ema + 0.35 * raw
         self.score = self.ema
-        if not self.calibrated:
+        if not self.scoring:
             self.level, self.flag = None, False
             return
         _, lo, hi = self.thresholds
@@ -221,19 +316,70 @@ class Device:
         # the slider's default so that "balanced" lands on the p90 of this
         # person's calm; moving it shifts the bar from there.
         self.thr_level = sens_to_level(self.sens)
+        was = self.flag
         self.flag = bool(self.level >= self.thr_level)
+
+        if self.session_id is None:
+            return
+        self.db.add_reading(self.session_id, score=self.score, level=self.level,
+                            flag=self.flag, bpm=self.bpm, spo2=self.spo2,
+                            contact=self.contact, quality=self.quality)
+        # an event is the EPISODE, not the tick: one row from the moment the flag
+        # rises to the moment it falls, so a two-minute stress response is one
+        # thing to review rather than 120.
+        if self.flag and not was:
+            self.event_id = self.db.open_event(self.session_id, level=self.level)
+            self.save_flag_window()
+        elif self.flag and self.event_id is not None:
+            self.db.bump_event(self.event_id, self.level)
+        elif was and not self.flag and self.event_id is not None:
+            self.db.close_event(self.event_id)
+            self.event_id = None
+
+    def save_flag_window(self):
+        """dump the 60 s that fired this flag.
+
+        the raw waveform is already on the master -- it has to be, the model
+        scores it here -- so this stores no more than is in RAM anyway. it is
+        what makes a flag reviewable at all: without it "was that stress or did
+        I knock the sensor?" is unanswerable after the fact.
+        """
+        if not RECORD_FLAGS or self.event_id is None:
+            return
+        try:
+            os.makedirs(FLAG_DIR, exist_ok=True)
+            path = os.path.join(FLAG_DIR, "event_%d.npz" % self.event_id)
+            np.savez_compressed(
+                path, bvp=np.fromiter(self.buf, dtype=np.float32, count=len(self.buf)),
+                fs=FS, device=self.id, subject=self.subject["code"],
+                level=self.level, score=self.score, quality=self.quality or 0.0,
+                t=time.time())
+            self.db.set_event_window(self.event_id, path)
+        except Exception as e:
+            print("  %s: could not save flag window: %s" % (self.id, e), flush=True)
 
     def status(self) -> dict:
         stale = time.monotonic() - self.last_seen if self.last_seen else None
+        sub = self.subject
+        b = self.baseline
         return {
-            "id": self.id, "ip": self.ip,
+            "id": self.id, "name": self.name, "ip": self.ip,
             "connected": self.connected and stale is not None and stale < 5,
             "contact": self.contact,
             "bpm": self.bpm, "spo2": self.spo2,
             "level": None if self.level is None else round(self.level, 3),
             "flag": self.flag,
             "score": round(self.score, 5),
-            "calibrated": self.calibrated,
+            "quality": None if self.quality is None else round(self.quality, 3),
+            "quality_note": self.quality_note,
+            "scoring": self.scoring,
+            "subject": None if sub is None else
+                       {"id": sub["id"], "code": sub["code"],
+                        "name": sub["display_name"] or sub["code"]},
+            "baseline": None if b is None else
+                        {"threshold": round(b["threshold"], 5),
+                         "n_windows": b["n_windows"], "created": b["created"]},
+            "session_id": self.session_id,
             "sens": round(self.sens, 3),
             "thr_level": round(self.thr_level, 3),
             "buf": len(self.buf), "win": WIN,
@@ -263,7 +409,9 @@ class CalibSession:
         if now < self.next_at:
             return
         self.next_at = now + 5.0
-        self.scores.append(dev.score_window())
+        sc, _, _ = dev.score_window()
+        if sc is not None:          # a baseline learned from knocks is not calm
+            self.scores.append(sc)
 
     def status(self) -> dict:
         return {"windows": len(self.scores), "target": self.TARGET,
@@ -283,10 +431,11 @@ class CalibSession:
 # ------------------------------------------------------------------ the fleet
 
 class Fleet:
-    def __init__(self, det, subnets: list, extra: list):
+    def __init__(self, det, subnets: list, extra: list, db):
         self.det = det
         self.subnets = subnets
         self.extra = extra
+        self.db = db
         self.devices: dict = {}
         self.scanning = False
         self.last_scan = 0.0
@@ -303,17 +452,38 @@ class Fleet:
                     found.append(info)
             for info in found:
                 dev_id, ip = info["id"], info["ip"]
+                self.db.seen_device(dev_id, ip)
                 if dev_id in self.devices:
                     self.devices[dev_id].ip = ip      # DHCP may have moved it
                     continue
-                dev = Device(dev_id, ip, self.det)
+                dev = Device(dev_id, ip, self.det, self.db)
                 self.devices[dev_id] = dev
-                print(f"  found {dev_id} at {ip}"
-                      f"{'' if dev.calibrated else '   (not calibrated)'}", flush=True)
+                why = ("" if dev.scoring else
+                       "   (no subject assigned)" if dev.subject is None else
+                       f"   ({dev.subject['code']} has no baseline)")
+                print(f"  found {dev_id} at {ip}{why}", flush=True)
                 asyncio.create_task(self.pump(dev))
         finally:
             self.scanning = False
             self.last_scan = time.monotonic()
+
+    async def housekeeping_loop(self, every: float = 30.0):
+        """close sessions nobody is in any more.
+
+        a session cannot end itself from inside the stream loop: the board going
+        quiet -- unplugged, out of range, crashed -- is exactly the case where no
+        more frames arrive to notice it with.
+        """
+        while True:
+            await asyncio.sleep(every)
+            now = time.monotonic()
+            for dev in list(self.devices.values()):
+                if dev.session_id is None:
+                    continue
+                idle = now - (dev.last_contact or 0.0)
+                if idle > SESSION_IDLE_S:
+                    dev.end_session()
+                    print(f"  {dev.id}: session closed after {idle:.0f}s idle", flush=True)
 
     async def pump(self, dev: Device):
         """one task per device: read its stream, score it, push the verdict back."""
@@ -323,6 +493,7 @@ class Fleet:
                 async with websockets.connect(f"ws://{dev.ip}/ws",
                                               open_timeout=8, max_queue=64) as ws:
                     dev.connected = True
+                    dev.ws = ws
                     next_score = time.monotonic() + 1.0
                     async for raw in ws:
                         try:
@@ -339,6 +510,9 @@ class Fleet:
                         if m.get("sens") is not None:
                             dev.sens = float(m["sens"])   # the user moved the slider
                         now_c = time.monotonic()
+                        if dev.contact:
+                            dev.last_contact = now_c
+                            dev.ensure_session()          # nobody presses start
                         if not dev.contact:
                             # a momentary lift should not cost a whole minute of
                             # refilling. hold the buffer briefly; only a real
@@ -361,8 +535,10 @@ class Fleet:
                         if now < next_score or len(dev.buf) < WIN:
                             continue
                         next_score = now + 1.0
-                        dev.apply(dev.score_window())
-                        if dev.calibrated:
+                        sc, q, why = dev.score_window()
+                        dev.quality_note = why
+                        dev.apply(sc, q)
+                        if dev.scoring and sc is not None:
                             # off the loop: a slow board must not stall the others
                             ok = await asyncio.get_running_loop().run_in_executor(
                                 NET, push_flag, dev.ip, dev.flag, dev.level or 0.0,
@@ -370,7 +546,10 @@ class Fleet:
                             dev.pushes += ok
                             dev.fails += (not ok)
             except Exception:
+                pass
+            finally:
                 dev.connected = False
+                dev.ws = None
                 await asyncio.sleep(3.0)
 
     async def rescan_loop(self, every: float):
@@ -382,7 +561,7 @@ class Fleet:
 # ----------------------------------------------------------------- the server
 
 def build_app(fleet: Fleet):
-    from fastapi import FastAPI
+    from fastapi import Body, FastAPI
     from fastapi.responses import HTMLResponse, JSONResponse
 
     app = FastAPI()
@@ -396,6 +575,7 @@ def build_app(fleet: Fleet):
     @app.get("/api/devices")
     async def devices():
         return JSONResponse({
+            "api": API_VERSION,
             "scanning": fleet.scanning,
             "subnet": ", ".join(fleet.subnets),
             "devices": [d.status() for d in
@@ -407,12 +587,121 @@ def build_app(fleet: Fleet):
         asyncio.create_task(fleet.discover())
         return {"ok": True}
 
+    # ---- subjects: the people, independent of whatever board they are on ----
+
+    @app.get("/api/subjects")
+    async def subjects():
+        return JSONResponse({"subjects": fleet.db.subjects_status()})
+
+    @app.post("/api/subjects")
+    async def new_subject(body: dict = Body(default={})):
+        code = (body.get("code") or "").strip() or fleet.db.next_subject_code()
+        if fleet.db.subject_by_code(code):
+            return JSONResponse({"error": f"{code} already exists"}, status_code=400)
+        sid = fleet.db.create_subject(code, (body.get("name") or "").strip(),
+                                      (body.get("notes") or "").strip())
+        print(f"  subject {code} created", flush=True)
+        return {"ok": True, "id": sid, "code": code}
+
+    @app.delete("/api/subjects/{sid}")
+    async def delete_subject(sid: int):
+        sub = fleet.db.subject(sid)
+        if sub is None:
+            return JSONResponse({"error": "unknown subject"}, status_code=404)
+        stats = fleet.db.subject_stats(sid)
+        fleet.db.delete_subject(sid)
+        # any board they were on is now unattributed, and its in-flight score is
+        # about a person who no longer exists -- drop it rather than carry it on
+        # to whoever is assigned next.
+        for d in fleet.devices.values():
+            if d.subject and d.subject["id"] == sid:
+                d.session_id, d.event_id = None, None
+                d.ema, d.level, d.flag = None, None, False
+                d.refresh()
+        print(f"  subject {sub['code']} deleted "
+              f"({stats['n_sessions']} sessions, {stats['n_readings']} readings, "
+              f"{stats['n_events']} flags)", flush=True)
+        return {"ok": True, "deleted": sub["code"], **stats}
+
+    @app.get("/api/subjects/{sid}/stats")
+    async def subject_stats(sid: int):
+        if fleet.db.subject(sid) is None:
+            return JSONResponse({"error": "unknown subject"}, status_code=404)
+        return JSONResponse(fleet.db.subject_stats(sid))
+
+    @app.get("/api/subjects/{sid}/events")
+    async def subject_events(sid: int, limit: int = 50):
+        return JSONResponse({"events": fleet.db.events_for_subject(sid, limit)})
+
+    @app.post("/api/events/{eid}/ack")
+    async def ack(eid: int, body: dict = Body(default={})):
+        v = (body.get("verdict") or "").strip() or None
+        try:
+            fleet.db.ack_event(eid, verdict=v, note=(body.get("note") or "").strip())
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return {"ok": True}
+
+    @app.get("/api/verdicts")
+    async def verdicts(subject_id: int = None):
+        return JSONResponse(fleet.db.verdict_tally(subject_id))
+
+    # ---- who is wearing what ----
+
+    @app.post("/api/devices/{dev_id}/assign")
+    async def assign(dev_id: str, body: dict = Body(default={})):
+        dev = fleet.devices.get(dev_id)
+        if dev is None:
+            return JSONResponse({"error": "unknown device"}, status_code=404)
+        sid = body.get("subject_id")
+        fleet.db.assign_subject(dev_id, sid)
+        # the open session ended with the old wearer; drop the in-flight state too,
+        # or the next reading would carry the previous person's smoothed score.
+        dev.session_id, dev.event_id = None, None
+        dev.ema, dev.level, dev.flag = None, None, False
+        dev.refresh()
+        who = dev.subject["code"] if dev.subject else "nobody"
+        print(f"  {dev_id}: now worn by {who}", flush=True)
+        return {"ok": True, "subject": dev.status()["subject"]}
+
+    @app.post("/api/devices/{dev_id}/rename")
+    async def rename_device(dev_id: str, body: dict = Body(default={})):
+        dev = fleet.devices.get(dev_id)
+        if dev is None:
+            return JSONResponse({"error": "unknown device"}, status_code=404)
+        fleet.db.rename_device(dev_id, body.get("name") or "")
+        dev.refresh()
+        return {"ok": True, "name": dev.name}
+
+    @app.post("/api/subjects/{sid}/rename")
+    async def rename_subject(sid: int, body: dict = Body(default={})):
+        sub = fleet.db.subject(sid)
+        if sub is None:
+            return JSONResponse({"error": "unknown subject"}, status_code=404)
+        code = (body.get("code") or "").strip()
+        if code and code != sub["code"] and fleet.db.subject_by_code(code):
+            return JSONResponse({"error": f"{code} is taken"}, status_code=400)
+        fleet.db.rename_subject(sid, name=body.get("name"), code=code or None)
+        # every board showing this person is holding a stale copy of the row
+        for d in fleet.devices.values():
+            if d.subject and d.subject["id"] == sid:
+                d.refresh()
+        return {"ok": True, "subject": fleet.db.subject(sid)}
+
+    @app.get("/api/devices/{dev_id}/events")
+    async def device_events(dev_id: str, limit: int = 50):
+        return JSONResponse({"events": fleet.db.events_for_device(dev_id, limit)})
+
     @app.post("/api/calib/{dev_id}/{action}")
     async def calib(dev_id: str, action: str):
         dev = fleet.devices.get(dev_id)
         if dev is None:
             return JSONResponse({"error": "unknown device"}, status_code=404)
         if action == "start":
+            # a baseline has to belong to somebody, or it is just a number.
+            if dev.subject is None:
+                return JSONResponse({"error": "assign a subject to this board first"},
+                                    status_code=400)
             dev.calib = CalibSession()
             return {"ok": True}
         if action == "cancel":
@@ -422,13 +711,17 @@ def build_app(fleet: Fleet):
             if not dev.calib or len(dev.calib.scores) < CalibSession.TARGET:
                 return JSONResponse({"error": "not enough clean windows yet"},
                                     status_code=400)
+            if dev.subject is None:
+                return JSONResponse({"error": "no subject on this board"}, status_code=400)
             r = dev.calib.result()
-            dev.save_scorer(r["threshold"], r["ref_lo"], r["ref_hi"], r["n"])
+            sens = dev.commit_calibration(r)
+            pushed = await dev.send_sens(sens)
             dev.calib.done = True
             dev.calib = None
-            print(f"  {dev_id}: calibrated on {r['n']} windows, "
-                  f"threshold {r['threshold']:.5f}", flush=True)
-            return {"ok": True, **r}
+            print(f"  {dev_id}: {dev.subject['code']} calibrated on {r['n']} windows, "
+                  f"threshold {r['threshold']:.5f}, slider -> {dev.sens:.2f}"
+                  f"{'' if pushed else ' (board did not take it)'}", flush=True)
+            return {"ok": True, "sens": dev.sens, **r}
         return JSONResponse({"error": "unknown action"}, status_code=400)
 
     return app
@@ -442,11 +735,23 @@ async def amain(args) -> int:
         print("  could not work out this machine's subnet; pass --subnet 192.168.1")
         return 1
 
+    db = Db(args.db)
+    print(f"  store {db.path}", flush=True)
+    for name, code, dev in import_legacy_scorers(db, verbose=False):
+        print(f"  imported {name} -> subject {code} on {dev}", flush=True)
+    stale = db.close_stale_sessions()
+    if stale:
+        print(f"  closed {stale} session(s) left open by a previous run", flush=True)
+
     print("  loading model… (~45 s: TensorFlow + the 4 MB int8 model)", flush=True)
-    det = LiveAnomalyDetector()          # thresholds come per device, not from here
+    det = LiveAnomalyDetector()          # thresholds come per subject, not from here
+    # every stored score records which model produced it: swap the model and the
+    # thresholds mean something different, so a level without one is unreadable.
+    det.model_id = db.register_model("ae_int8.tflite",
+                                     os.path.join(SAVE_DIR, "ae_int8.tflite"))
     print("  model ready\n")
 
-    fleet = Fleet(det, subnets, args.device or [])
+    fleet = Fleet(det, subnets, args.device or [], db)
     print("  scanning " + ", ".join(f"{n}.0/24" for n in subnets) + " for boards…",
           flush=True)
     await fleet.discover()
@@ -455,6 +760,7 @@ async def amain(args) -> int:
         print("  (looking for an HTTP /health on "
               + ", ".join(f"{n}.1-254" for n in subnets) + ")")
     asyncio.create_task(fleet.rescan_loop(args.rescan))
+    asyncio.create_task(fleet.housekeeping_loop())
 
     import uvicorn
     print(f"\n  roster -> http://localhost:{args.port}\n")
@@ -472,6 +778,7 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=8002, help="roster port (default 8002)")
     ap.add_argument("--rescan", type=float, default=30.0,
                     help="seconds between rescans (default 30)")
+    ap.add_argument("--db", default=DB_PATH, help=f"the store (default {DB_PATH})")
     args = ap.parse_args()
     try:
         return asyncio.run(amain(args))
