@@ -206,6 +206,20 @@ WESAD is ~17 GB and gitignored — download it and unzip into `WESAD/`. `ae`/`ss
 
 ## 2b. the board hosts the dashboard (WiFi)
 
+### the one command
+
+```bash
+python3 -m anomaly.fleet          # roster -> http://localhost:8002
+```
+
+scans every local subnet for boards, scores each one, pushes each verdict back
+to that board. no IP to look up. `--subnet 192.168.1` only if a board is on a
+network this machine is not. calibrate each device from the roster — it
+writes `anomaly/saved/scorer_<device-id>.npz`, so every person gets their own
+baseline, and an uncalibrated device gets no flag rather than someone else's.
+
+everything below is the single-device detail behind that command.
+
 the ESP32 serves the dashboard itself and streams its own sensor over WiFi. the
 PC becomes an optional scorer rather than the thing everything runs on.
 

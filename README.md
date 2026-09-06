@@ -183,9 +183,9 @@ python3 -m anomaly.serve          # → http://localhost:8001  ( / Pulse Watch �
 python3 -m anomaly.device_check           # grip coach: contact, perfusion, drift, quality
 python3 -m anomaly.serve --source device  # then hit Calibrate in the UI to set your baseline
 
-# or let the BOARD host the dashboard over WiFi, and score it from here
+# or let the BOARDS host their dashboards over WiFi and score them all from here
 python3 -m anomaly.device_wifi --ssid MyNetwork   # once; or hard-code sketch_aug3a/secrets.h
-python3 -m anomaly.master --host <board-ip>       # headless scorer; open http://<board-ip>/
+python3 -m anomaly.fleet                          # finds every board -> http://localhost:8002
 
 # evaluate the detectors on WESAD (needs WESAD downloaded; leave-one-subject-out)
 python3 -m anomaly.run --model ae --bottleneck 256 --ch-cap 32   # baseline | ae | ssl
@@ -194,7 +194,9 @@ python3 -m anomaly.run --model ae --bottleneck 256 --ch-cap 32   # baseline | ae
 python3 -m anomaly.export --bottleneck 256 --ch-cap 32 && python3 -m anomaly.compress
 ```
 
-see [`COMMANDS.md`](COMMANDS.md) for the full command cheat sheet.
+see [`COMMANDS.md`](COMMANDS.md) for the full command cheat sheet, and
+[`HANDOFF.md`](HANDOFF.md) for the current state, the gotchas that cost real
+time, and the ranked next steps.
 
 ## data
 
@@ -225,7 +227,9 @@ anomaly/                             one-class anomaly detector (current directi
   device_check.py                    grip coach + the shared signal-quality gate
   device_calibrate.py                record our own calm, re-derive the flag threshold (O6)
   device_wifi.py                     set the board's WiFi credentials over USB, read back its IP
-  master.py                          headless scorer: reads the board over WiFi, pushes the verdict back
+  fleet.py                           THE master: finds every board, scores them, serves the roster
+  master.py                          single-device headless scorer (debugging)
+  static/fleet.html                  the roster page
   make_plots.py                      result figures (fig1–4)
   saved/                             deployed int8 model (ae_int8.tflite + scorer.npz; keras gitignored)
   RESULTS.md                         model results

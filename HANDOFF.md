@@ -6,31 +6,52 @@ Context for a fresh session. Branch `esp32`.
 
 ## Where the system is
 
-The ESP32-S3 + MAX30102 is a **self-hosting monitor**. It reads the sensor,
-conditions the signal in C, serves the whole dashboard from its own flash over
-WiFi, and shows a CALM/STRESSED verdict on the TFT.
-
-```
-browser --HTTP/WS--> ESP32   dashboard + 64 Hz waveform + HR/SpO2 + TFT verdict
-                      ^  |
-             GET /flag |  | ws:// waveform
-                      |  v
-                     PC   anomaly.master (autoencoder, headless, optional)
-```
-
-Two ways to run it, and you use **one or the other**:
+ONE command runs the whole system:
 
 ```bash
-# A. PC does everything, sensor over USB (older path, still works)
-python3 -m anomaly.serve --source device        # -> http://localhost:8001
-
-# B. board hosts the dashboard, PC only scores
-python3 -m anomaly.master --host <board-ip>     # -> http://<board-ip>/
+python3 -m anomaly.fleet          # roster at http://localhost:8002
 ```
 
-**The model is NOT on the board.** The ESP32 does sensing, conditioning, the web
-server and the display; the PC runs the autoencoder. That satisfies O4 but leaves
-**DoD item 4 / O7 open**.
+It scans every local subnet, finds boards by their `/health`, opens a websocket
+to each, runs the model on their streams, and pushes each verdict back to that
+board's `/flag`.
+
+```
+browser --> ESP32 (its own dashboard)        roster --> localhost:8002
+              ^  |                                        |
+     GET /flag|  | ws:// waveform                         | opens ITS dashboard
+              |  v                                        v
+             master (anomaly.fleet)  <---- one task per device ----> ESP32 #2, #3...
+```
+
+| runs on the ESP32 | runs on the master |
+|---|---|
+| sensor + conditioning to 64 Hz | **the ML model, and only the model** |
+| heart rate, SpO2 | per-device calibration |
+| its own single-patient dashboard | the roster / discovery |
+| TFT verdict, sensitivity slider | turning the slider into a threshold |
+
+**Devices never see each other.** A board's dashboard shows only that board;
+only the master sees the fleet. Clicking a device in the roster opens that
+device's own page, served by the device.
+
+**Per-device calibration:** `anomaly/saved/scorer_<device-id>.npz`, keyed to a
+MAC-derived id the firmware reports (e.g. `pulse-a4f2c1`). An uncalibrated
+device shows `--` and gets **no flag pushed** rather than being judged against
+someone else's baseline. Calibration runs from the roster because the board can
+stream but cannot score its own windows.
+
+**When the master is gone** a board keeps sensing, keeps serving its page and
+keeps showing HR/SpO2 — it just reports no verdict. That empty slot is what
+an on-device model would fill.
+
+Older, still working:
+
+```bash
+python3 -m anomaly.serve                  # WESAD replay demo, no hardware
+python3 -m anomaly.serve --source device  # PC hosts dashboard, sensor over USB
+python3 -m anomaly.master --host <ip>     # single device, headless, for debugging
+```
 
 ---
 
@@ -159,6 +180,45 @@ partition scheme with a large enough app partition.
 - `/dev` still shows WESAD-only panels (ground truth, agreement) that are
   meaningless on this hardware.
 - Signal-quality index not ported to C, so frames report `quality: null`.
+- The fleet is untested with more than one board (only one exists).
+- A 60 s refill after removing a finger is unavoidable: 3840 samples is the
+  model's input shape. A shorter window means retraining and re-validating.
+
+## Next steps, ranked
+
+**1. Induced stress session.** Still the unvalidated premise under everything.
+3 min calm -> 3 min serial subtraction (out loud, someone pushing the pace,
+sensor hand still) -> 3 min recovery. HR rising 10-25 bpm is the control check.
+If HR rises and the level does not, that IS the finding and needs reporting.
+Nothing else is worth optimising until this is known.
+
+**2. UBC site-shift experiment.** The strongest result available with no new
+data and no IRB. `Code & Data/` has 31 participants recorded at fingertip AND
+wrist (placements `IFT`, `MFT`, `IFB`, `WI`; labels are cardiac/occlusion, not
+stress). Score the WESAD-trained model on both sites for the same people: the
+difference is the pure site effect with subject held constant. Turns the n=1
+transfer delta into a 31-subject controlled measurement. Raw trials are
+continuous 50 Hz IR/RED at ~2 min each, re-windowable to 60 s.
+
+**3. Mahalanobis on the board.** Closes DoD 4 / O7. 520 bytes (median, mu, sd and
+a 10x10 inverse covariance) against the autoencoder's 4.2 MB {DASH} no TFLM, no
+arena sizing, no partition changes. The 0.71 -> 0.64 PR-AUC gap IS the "accuracy
+cost" the DoD asks to be reported, and it gives the board a verdict when the
+master is away.
+
+**4. Bottleneck sweep.** One command on the GPU box; 91% of the model is two
+Dense layers, so a smaller bottleneck may cut it 4x for little accuracy loss:
+
+```bash
+python3 -m anomaly.run --model ae --bottleneck 64 --ch-cap 32
+```
+
+**5. Dashboard honesty.** Strip `/dev`'s WESAD-only panels (ground truth,
+agreement) which are meaningless on our hardware, and remove Pulse Watch's
+mock-replay fallback that shows fabricated data when the socket is slow.
+
+**Other people's lanes, still blocking:** O3 rig validation against a reference
+oximeter (closes M1), and O5/IRB (gates every multi-subject claim).
 
 ## Architecture decision on record
 
