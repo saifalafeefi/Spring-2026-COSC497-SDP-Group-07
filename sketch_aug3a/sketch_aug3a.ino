@@ -171,6 +171,15 @@ bool webStarted = false;
 // this -- which device is which in the roster, and which calibration file holds
 // that person's baseline -- so it must survive reboots and DHCP changing the IP.
 String devId = "pulse-unknown";
+
+// The sensitivity slider lives in the dashboards, but the MODEL is on the master,
+// so the board is only a courier: it stores what the user picked, reports it in
+// every frame, and the master turns it into an actual threshold and pushes the
+// resulting level back for the UI to draw. Before this the board dropped the
+// command entirely and reported a hardcoded 0.42, so the threshold line on screen
+// had nothing to do with when the flag actually fired.
+float hostSens = 0.5f;          // 0..1 from the slider
+float hostThrLevel = 0.42f;     // where the master's threshold sits, 0..1
 String wifiSsid;
 String wifiPass;
 bool wifiWanted = false;         // credentials exist, so keep trying
@@ -874,6 +883,10 @@ void webBegin() {
     }
     hostFlag = f;
     hostLevel = constrain(l, 0, 100);
+    if (req->hasParam("t")) {         // where the master's threshold sits, 0-100
+      int t = req->getParam("t")->value().toInt();
+      hostThrLevel = constrain(t, 0, 100) / 100.0f;
+    }
     hostFlagMs = millis();
     req->send(200, "text/plain", "ok");
   });
@@ -901,6 +914,31 @@ void webBegin() {
 
   ws.onEvent([](AsyncWebSocket *srv, AsyncWebSocketClient *client,
                 AwsEventType type, void *arg, uint8_t *data, size_t len) {
+    if (type == WS_EVT_DATA) {
+      AwsFrameInfo *info = (AwsFrameInfo *)arg;
+      if (!(info->final && info->index == 0 && info->len == len)) {
+        return;                      // only whole single-frame text messages
+      }
+      char buf[192];
+      size_t n = len < sizeof(buf) - 1 ? len : sizeof(buf) - 1;
+      memcpy(buf, data, n);
+      buf[n] = 0;
+      if (strstr(buf, "set_sensitivity") != NULL) {
+        const char *v = strstr(buf, "\"value\"");
+        if (v != NULL && (v = strchr(v, ':')) != NULL) {
+          float sv = atof(v + 1);
+          if (sv >= 0.0f && sv <= 1.0f) {
+            hostSens = sv;
+            char thr[128];
+            snprintf(thr, sizeof(thr),
+                     "{\"type\":\"thr\",\"sensitivity\":%.3f,\"thr_level\":%.3f,\"threshold\":0}",
+                     hostSens, hostThrLevel);
+            srv->textAll(thr);       // keep every open dashboard in step
+          }
+        }
+      }
+      return;
+    }
     if (type == WS_EVT_CONNECT) {
       Serial.print("# ws client ");
       Serial.println(client->id());
@@ -909,9 +947,9 @@ void webBegin() {
                "{\"type\":\"hello\",\"fs\":%d,\"win_s\":60,\"disp\":%d,\"infer_s\":1,"
                "\"subject\":\"%s\",\"running\":true,\"source\":\"device\","
                "\"calibrated_on\":\"none\",\"model\":false,\"device_connected\":true,"
-               "\"device_port\":\"esp32\",\"sensitivity\":0.5,\"thr_level\":0.42,"
+               "\"device_port\":\"esp32\",\"sensitivity\":%.3f,\"thr_level\":%.3f,"
                "\"threshold\":0}",
-               COND_FS, COND_FS * 15, devId.c_str());
+               COND_FS, COND_FS * 15, devId.c_str(), hostSens, hostThrLevel);
       client->text(hello);
     }
   });
@@ -995,7 +1033,8 @@ void wsTick() {
   snprintf(frame, sizeof(frame),
            "{\"type\":\"f\",\"running\":true,\"elapsed\":%.1f,\"buf\":%lu,\"win\":%d,"
            "\"idx\":[%s],\"bvp\":[%s],\"level\":%s,\"flag\":%s,\"score\":0,"
-           "\"bpm\":%s,\"spo2\":%s,\"quality\":null,\"label\":\"-\","
+           "\"bpm\":%s,\"spo2\":%s,\"quality\":null,\"label\":\"-\",\"sens\":%.3f,"
+           "\"thr_level\":%.3f,"
            "\"device\":{\"connected\":true,\"port\":\"esp32\",\"contact\":%s,\"dropped\":%lu}}",
            condTotal / (float)COND_FS, (unsigned long)buffered, COND_FS * 60,
            idx, bvp, levelStr,
@@ -1003,6 +1042,7 @@ void wsTick() {
            (finger && bpmValid) ? String(bpmLive).c_str() : "null",
            (finger && validSpo2 && spo2 >= 70 && spo2 <= 100)
                ? String(spo2).c_str() : "null",
+           hostSens, hostThrLevel,
            finger ? "true" : "false",
            (unsigned long)condDropped);
   ws.textAll(frame);

@@ -125,9 +125,19 @@ async def scan(subnet: str, concurrency: int = 64) -> list:
     return [f for f in found if f]
 
 
-def push_flag(ip: str, flag: bool, level: float) -> bool:
+def sens_to_level(sens: float) -> float:
+    """slider position -> where the flag threshold sits on the 0-1 level scale.
+
+    the same curve Pulse Watch and serve.py use, so the line the UI draws and the
+    line the model actually flags at are finally the same number.
+    """
+    return min(0.85, max(0.12, 0.62 - 0.40 * float(sens)))
+
+
+def push_flag(ip: str, flag: bool, level: float, thr_level: float) -> bool:
     q = urllib.parse.urlencode({"f": 1 if flag else 0,
-                                "l": int(round(max(0.0, min(1.0, level)) * 100))})
+                                "l": int(round(max(0.0, min(1.0, level)) * 100)),
+                                "t": int(round(max(0.0, min(1.0, thr_level)) * 100))})
     try:
         with urllib.request.urlopen(f"http://{ip}/flag?{q}", timeout=2.0) as r:
             return r.status == 200
@@ -161,6 +171,9 @@ class Device:
         self.pushes = 0
         self.fails = 0
         self.calib = None                 # a CalibSession while one is running
+        self.sens = 0.5                   # slider position, mirrored from the board
+        self.thr_level = 0.42             # where that puts the threshold, 0-1
+        self.lost_since = None            # when contact was last lost
         self.thresholds = None            # (threshold, lo, hi) once calibrated
         self.load_scorer()
 
@@ -182,6 +195,11 @@ class Device:
                  device_id=self.id,
                  created=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"))
         self.thresholds = (threshold, lo, hi)
+        # put the slider where "balanced" reproduces the calibrated p90, so the
+        # default behaviour after calibrating is exactly 90% specificity.
+        lvl = (threshold - lo) / (hi - lo + 1e-9)
+        self.sens = float(np.clip((0.62 - lvl) / 0.40, 0.0, 1.0))
+        self.thr_level = sens_to_level(self.sens)
 
     @property
     def calibrated(self) -> bool:
@@ -197,9 +215,13 @@ class Device:
         if not self.calibrated:
             self.level, self.flag = None, False
             return
-        thr, lo, hi = self.thresholds
+        _, lo, hi = self.thresholds
         self.level = float(np.clip((self.ema - lo) / (hi - lo + 1e-9), 0.0, 1.0))
-        self.flag = bool(self.ema >= thr)
+        # the SLIDER decides the threshold, not the stored p90. calibration sets
+        # the slider's default so that "balanced" lands on the p90 of this
+        # person's calm; moving it shifts the bar from there.
+        self.thr_level = sens_to_level(self.sens)
+        self.flag = bool(self.level >= self.thr_level)
 
     def status(self) -> dict:
         stale = time.monotonic() - self.last_seen if self.last_seen else None
@@ -212,6 +234,8 @@ class Device:
             "flag": self.flag,
             "score": round(self.score, 5),
             "calibrated": self.calibrated,
+            "sens": round(self.sens, 3),
+            "thr_level": round(self.thr_level, 3),
             "buf": len(self.buf), "win": WIN,
             "pushes": self.pushes, "fails": self.fails,
             "last_seen": None if stale is None else round(stale, 1),
@@ -312,10 +336,21 @@ class Fleet:
                         dev.contact = bool(d.get("contact"))
                         dev.bpm = m.get("bpm")
                         dev.spo2 = m.get("spo2")
+                        if m.get("sens") is not None:
+                            dev.sens = float(m["sens"])   # the user moved the slider
+                        now_c = time.monotonic()
                         if not dev.contact:
-                            dev.buf.clear()        # noise must never enter a window
-                            dev.level, dev.flag, dev.ema = None, False, None
+                            # a momentary lift should not cost a whole minute of
+                            # refilling. hold the buffer briefly; only a real
+                            # removal discards it. no samples are appended either
+                            # way, so noise still never enters a window.
+                            if dev.lost_since is None:
+                                dev.lost_since = now_c
+                            if now_c - dev.lost_since > 3.0:
+                                dev.buf.clear()
+                                dev.level, dev.flag, dev.ema = None, False, None
                             continue
+                        dev.lost_since = None
                         for v in (m.get("bvp") or []):
                             dev.buf.append(float(v))
 
@@ -330,7 +365,8 @@ class Fleet:
                         if dev.calibrated:
                             # off the loop: a slow board must not stall the others
                             ok = await asyncio.get_running_loop().run_in_executor(
-                                NET, push_flag, dev.ip, dev.flag, dev.level or 0.0)
+                                NET, push_flag, dev.ip, dev.flag, dev.level or 0.0,
+                                dev.thr_level)
                             dev.pushes += ok
                             dev.fails += (not ok)
             except Exception:
