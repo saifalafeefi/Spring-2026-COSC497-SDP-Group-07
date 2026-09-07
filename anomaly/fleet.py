@@ -32,6 +32,7 @@ import asyncio
 import ipaddress
 import json
 import os
+import re
 import socket
 import sys
 import time
@@ -48,6 +49,13 @@ from .infer import SAVE_DIR
 from .wesad import FS
 
 WIN = 60 * FS
+
+# The buffer holds more than the model needs, so a disturbed second can be
+# dropped and back-filled from clean history instead of halting the detector for
+# a full window. 150 s leaves 90 s of slack -- enough to ride out a burst of
+# tapping without ever stopping, and 30 KB per board.
+HIST = 150 * FS
+
 HTTP_TIMEOUT = 1.0
 
 # The roster page is read from disk on every request, but these routes are fixed
@@ -55,7 +63,7 @@ HTTP_TIMEOUT = 1.0
 # page against its OLD routes -- the page calls an endpoint that does not exist
 # yet and the browser reports a bare "failed". Bump this whenever a route is
 # added or changed; the page checks it and says plainly that a restart is due.
-API_VERSION = 3
+API_VERSION = 5
 
 # how long a board can go without a finger on it before its session is over.
 # generous on purpose: a session is a stretch of monitoring, and closing one
@@ -155,10 +163,23 @@ def sens_to_level(sens: float) -> float:
     return min(0.85, max(0.12, 0.62 - 0.40 * float(sens)))
 
 
-def push_flag(ip: str, flag: bool, level: float, thr_level: float) -> bool:
+def push_flag(ip: str, flag: bool, level: float, thr_level: float,
+              state: str = "ok", wait: int = 0, subject: str = "") -> bool:
+    """the verdict, or the reason there is not one.
+
+    the board used to hear from us only when we had a real score, so for the
+    first 60 s -- and any time a window was unusable -- it sat there showing
+    CALM, which is a verdict, and the wrong one. `s` says which of those it is
+    and `w` how many seconds are left to wait.
+    """
     q = urllib.parse.urlencode({"f": 1 if flag else 0,
                                 "l": int(round(max(0.0, min(1.0, level)) * 100)),
-                                "t": int(round(max(0.0, min(1.0, thr_level)) * 100))})
+                                "t": int(round(max(0.0, min(1.0, thr_level)) * 100)),
+                                "s": state, "w": int(max(0, wait)),
+                                # the board only knows its MAC-derived id, so its
+                                # own dashboard called the wearer pulse-000000
+                                # whatever they had been renamed to
+                                "n": subject[:27]})
     try:
         with urllib.request.urlopen(f"http://{ip}/flag?{q}", timeout=2.0) as r:
             return r.status == 200
@@ -176,7 +197,7 @@ class Device:
         self.ip = ip
         self.det = det                    # LiveAnomalyDetector, thresholds swapped per subject
         self.db = db
-        self.buf: deque = deque(maxlen=WIN)
+        self.buf: deque = deque(maxlen=HIST)   # raw history, longer than a window
         self.ema = None
         self.level = None
         self.flag = False
@@ -201,6 +222,8 @@ class Device:
         self.name = dev_id                # human label, falls back to the id
         self.quality = None               # 0-1 for the last window assessed
         self.quality_note = ""            # why it was refused, if it was
+        self.state = "none"               # ok | warm | hold | none
+        self.recent: deque = deque(maxlen=120)   # last 2 min of raw scores
         self.refresh()
 
     # ---- who is wearing this, and what is normal for them ----
@@ -279,6 +302,7 @@ class Device:
                               session_id=sess,
                               model_id=getattr(self.det, "model_id", None),
                               source="device")
+        self.recent.clear()
         self.refresh()
         # where "balanced" reproduces the calibrated p90, so the default operating
         # point right after calibrating is exactly 90% specificity.
@@ -293,11 +317,13 @@ class Device:
         not. on clean pulse this stage is a no-op -- verified bit-identical on
         28 of 29 WESAD windows -- so it costs nothing when nothing is wrong.
         """
-        w = np.fromiter(self.buf, dtype=np.float32, count=WIN)
-        q = quality.assess(w)
-        if not q["usable"]:
-            return None, q["quality"], q["reason"]
-        return self.det.score(q["window"]), q["quality"], ""
+        hist = np.fromiter(self.buf, dtype=np.float32, count=len(self.buf))
+        r = quality.clean_window(hist, WIN, FS)
+        if r["window"] is None:
+            return None, r["quality"], r["reason"]
+        note = ("" if not r["dropped"] else
+                "skipped %d s of movement (%.1fx)" % (r["dropped"], r["env"]))
+        return self.det.score(r["window"]), r["quality"], note
 
     def apply(self, raw, q=None):
         """turn a raw reconstruction error into a level and a flag for THIS person,
@@ -305,6 +331,7 @@ class Device:
         self.quality = q
         if raw is None:              # window refused; hold, do not guess
             return
+        self.recent.append(float(raw))
         self.ema = raw if self.ema is None else 0.65 * self.ema + 0.35 * raw
         self.score = self.ema
         if not self.scoring:
@@ -350,13 +377,42 @@ class Device:
             os.makedirs(FLAG_DIR, exist_ok=True)
             path = os.path.join(FLAG_DIR, "event_%d.npz" % self.event_id)
             np.savez_compressed(
-                path, bvp=np.fromiter(self.buf, dtype=np.float32, count=len(self.buf)),
+                path, bvp=np.fromiter(self.buf, dtype=np.float32,
+                                      count=len(self.buf))[-WIN:],
                 fs=FS, device=self.id, subject=self.subject["code"],
                 level=self.level, score=self.score, quality=self.quality or 0.0,
                 t=time.time())
             self.db.set_event_window(self.event_id, path)
         except Exception as e:
             print("  %s: could not save flag window: %s" % (self.id, e), flush=True)
+
+    def subject_label(self) -> str:
+        """what the board should call whoever is wearing it."""
+        if self.subject is None:
+            return ""
+        name = (self.subject["display_name"] or "").strip()
+        return name or self.subject["code"]
+
+    def baseline_fit(self):
+        """does the stored baseline still describe the finger in front of it?
+
+        Measured on this rig: WITHIN a session the score is stable to about 1%
+        (three clean captures scored 0.2642/0.2653/0.2674), but BETWEEN sessions
+        the calibrated calm median moved +48% and then +22% -- each shift larger
+        than the whole 0-100% band is wide. So a baseline is remembered
+        perfectly and still stops describing today's finger, and the flags that
+        follow look random.
+
+        This compares the median of recent scores against the calm median the
+        baseline was built from. Near 0 means the baseline fits; far from it
+        means recalibrate, and saying so is better than flagging nonsense.
+        """
+        if not self.scoring or len(self.recent) < 30:
+            return None
+        _, lo, hi = self.thresholds
+        off = (float(np.median(self.recent)) - lo) / (hi - lo + 1e-9)
+        return {"offset": round(float(off), 3), "n": len(self.recent),
+                "stale": bool(abs(off) > 0.35)}
 
     def status(self) -> dict:
         stale = time.monotonic() - self.last_seen if self.last_seen else None
@@ -372,6 +428,8 @@ class Device:
             "score": round(self.score, 5),
             "quality": None if self.quality is None else round(self.quality, 3),
             "quality_note": self.quality_note,
+            "state": self.state,
+            "baseline_fit": self.baseline_fit(),
             "scoring": self.scoring,
             "subject": None if sub is None else
                        {"id": sub["id"], "code": sub["code"],
@@ -513,7 +571,13 @@ class Fleet:
                         if dev.contact:
                             dev.last_contact = now_c
                             dev.ensure_session()          # nobody presses start
-                        if not dev.contact:
+                        if dev.contact:
+                            dev.lost_since = None
+                            for v in (m.get("bvp") or []):
+                                dev.buf.append(float(v))
+                            if dev.calib:
+                                dev.calib.offer(dev)
+                        else:
                             # a momentary lift should not cost a whole minute of
                             # refilling. hold the buffer briefly; only a real
                             # removal discards it. no samples are appended either
@@ -523,28 +587,47 @@ class Fleet:
                             if now_c - dev.lost_since > 3.0:
                                 dev.buf.clear()
                                 dev.level, dev.flag, dev.ema = None, False, None
-                            continue
-                        dev.lost_since = None
-                        for v in (m.get("bvp") or []):
-                            dev.buf.append(float(v))
-
-                        if dev.calib:
-                            dev.calib.offer(dev)
+                            # NOTE: no `continue`. this used to skip straight past
+                            # the push below, so a board with no finger on it heard
+                            # nothing at all from the master -- which meant it never
+                            # learned who was wearing it and its own dashboard kept
+                            # calling them by the MAC-derived id.
 
                         now = time.monotonic()
-                        if now < next_score or len(dev.buf) < WIN:
+                        if now < next_score:
                             continue
                         next_score = now + 1.0
-                        sc, q, why = dev.score_window()
-                        dev.quality_note = why
-                        dev.apply(sc, q)
-                        if dev.scoring and sc is not None:
-                            # off the loop: a slow board must not stall the others
-                            ok = await asyncio.get_running_loop().run_in_executor(
-                                NET, push_flag, dev.ip, dev.flag, dev.level or 0.0,
-                                dev.thr_level)
-                            dev.pushes += ok
-                            dev.fails += (not ok)
+
+                        # Say something EVERY second, even when the answer is
+                        # "not yet". Silence read as calm on the board.
+                        wait = 0
+                        if not dev.contact:
+                            # the board is the authority on whether a finger is
+                            # there and says so on its own screen; we just keep
+                            # the channel warm so the name and state stay fresh
+                            state = "idle"
+                            dev.quality_note = "no finger on the sensor"
+                        elif not dev.scoring:
+                            state = "none"
+                            dev.quality_note = ("no subject assigned" if dev.subject is None
+                                                else "no baseline for this subject")
+                        elif len(dev.buf) < WIN:
+                            state = "warm"
+                            wait = int(np.ceil((WIN - len(dev.buf)) / float(FS)))
+                            dev.quality_note = "warming up — %d s left" % wait
+                        else:
+                            sc, q, why = dev.score_window()
+                            dev.quality_note = why
+                            dev.apply(sc, q)
+                            state = "ok" if sc is not None else "hold"
+
+                        dev.state = state
+                        # off the loop: a slow board must not stall the others
+                        ok = await asyncio.get_running_loop().run_in_executor(
+                            NET, push_flag, dev.ip, dev.flag, dev.level or 0.0,
+                            dev.thr_level, state, wait, dev.subject_label())
+                        dev.pushes += ok
+                        dev.fails += (not ok)
             except Exception:
                 pass
             finally:
@@ -570,7 +653,9 @@ def build_app(fleet: Fleet):
     @app.get("/")
     async def index():
         with open(os.path.join(here, "static", "fleet.html"), encoding="utf-8") as f:
-            return HTMLResponse(f.read())
+            # the page is read from disk every request precisely so an edit shows
+            # up on reload; a browser cache would undo that
+            return HTMLResponse(f.read(), headers={"Cache-Control": "no-store"})
 
     @app.get("/api/devices")
     async def devices():
@@ -734,6 +819,19 @@ async def amain(args) -> int:
     if not subnets:
         print("  could not work out this machine's subnet; pass --subnet 192.168.1")
         return 1
+
+    # The page carries the API version it was written against. They are edited in
+    # different files and I have already shipped them out of step once, which
+    # surfaced as a browser telling the user to restart a master that was already
+    # newer than their page. Catch it here instead, where it is one line to fix.
+    page = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "fleet.html")
+    try:
+        m = re.search(r"NEEDS_API\s*=\s*(\d+)", open(page, encoding="utf-8").read())
+        if m and int(m.group(1)) != API_VERSION:
+            print(f"  WARNING: fleet.html expects API v{m.group(1)} but this master is "
+                  f"v{API_VERSION} -- bump one of them", flush=True)
+    except Exception:
+        pass
 
     db = Db(args.db)
     print(f"  store {db.path}", flush=True)

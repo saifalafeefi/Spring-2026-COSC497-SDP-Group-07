@@ -145,6 +145,24 @@ uint32_t hostBpmMs = 0;
 int32_t hostFlag = -1;                // -1 unknown, 0 calm, 1 stressed
 int32_t hostLevel = 0;                // 0-100, the deviation percentage
 uint32_t hostFlagMs = 0;
+
+// WHY there is no verdict, when there is none. The master used to push only
+// once it had a real score, so for the first 60 s -- while its window filled --
+// the board heard nothing and showed CALM, which is a verdict, and the wrong
+// one: nobody watching could tell warm-up from a genuine all-clear.
+//   ok    a real verdict, use hostFlag
+//   warm  the master is still filling its 60 s window, hostWait seconds to go
+//   hold  the window was unusable (movement), no verdict this second
+//   none  no subject assigned to this board, or they have no baseline
+char hostState[6] = "none";
+// Who the master says is wearing this board. The board only knows its own
+// MAC-derived id, so its dashboard called the wearer "pulse-000000" no matter
+// what they were renamed to -- the name lives in the master's store, so the
+// master has to say it. Pushed with every verdict, which means a board that
+// reboots picks the name back up within a second rather than staying wrong.
+char hostSubject[28] = "";
+int32_t hostWait = 0;                 // seconds of warm-up left
+int32_t shownWait = -1;               // last warm-up number painted
 int32_t shownFlag = -2;               // what is currently painted, to avoid redraws
 uint32_t irDcDisplay = 0;             // slow IR average, for the no-finger check
 // Big enough for "W,<ssid>,<password>": an SSID is up to 32 chars and a WPA2
@@ -502,16 +520,25 @@ void drawInterface() {
 void drawStatus() {
   bool fresh = (hostFlag >= 0 && (millis() - hostFlagMs) < HOST_BPM_TTL);
   bool finger = (irDcDisplay > 50000);
-  int32_t state = (!finger) ? -1 : (fresh ? hostFlag : -2);
+  // -1 no finger, -2 master silent, -3 warming, -4 holding, -5 nobody assigned
+  int32_t state = (!finger) ? -1
+                : (!fresh) ? -2
+                : (strcmp(hostState, "warm") == 0) ? -3
+                : (strcmp(hostState, "hold") == 0) ? -4
+                : (strcmp(hostState, "none") == 0) ? -5
+                : hostFlag;
 
-  if (state == shownFlag) {
+  // the warm-up counts down, so it has to repaint even when the state is the same
+  if (state == shownFlag && !(state == -3 && hostWait != shownWait)) {
     return;                    // nothing changed, leave the panel alone
   }
   shownFlag = state;
+  shownWait = hostWait;
 
   uint16_t bg, fg;
   const char *word;
   const char *sub;
+  char warmWord[8];
   if (state == 1) {
     bg = ILI9341_RED;    fg = ILI9341_WHITE;
     word = "STRESSED";   sub = "deviation above your baseline";
@@ -521,6 +548,18 @@ void drawStatus() {
   } else if (state == -1) {
     bg = ILI9341_BLACK;  fg = ILI9341_DARKGREY;
     word = "--";         sub = "no finger on the sensor";
+  } else if (state == -3) {
+    // the model needs a full 60 s window before it can say anything at all,
+    // and showing CALM meanwhile was the wrong answer, not a missing one
+    bg = ILI9341_NAVY;   fg = ILI9341_WHITE;
+    snprintf(warmWord, sizeof(warmWord), "%lds", (long)hostWait);
+    word = warmWord;     sub = "warming up -- filling the 60s window";
+  } else if (state == -4) {
+    bg = ILI9341_OLIVE;  fg = ILI9341_WHITE;
+    word = "--";         sub = "movement -- holding the verdict";
+  } else if (state == -5) {
+    bg = ILI9341_BLACK;  fg = ILI9341_DARKGREY;
+    word = "--";         sub = "nobody assigned to this board";
   } else {
     bg = ILI9341_BLACK;  fg = ILI9341_DARKGREY;
     word = "--";         sub = "waiting for the dashboard";
@@ -899,6 +938,17 @@ void webBegin() {
     }
     hostFlag = f;
     hostLevel = constrain(l, 0, 100);
+    if (req->hasParam("s")) {
+      // strncpy + explicit terminator rather than strlcpy: same result, and
+      // no dependency on which libc the core happens to ship.
+      strncpy(hostState, req->getParam("s")->value().c_str(), sizeof(hostState) - 1);
+      hostState[sizeof(hostState) - 1] = 0;
+    }
+    if (req->hasParam("n")) {
+      strncpy(hostSubject, req->getParam("n")->value().c_str(), sizeof(hostSubject) - 1);
+      hostSubject[sizeof(hostSubject) - 1] = 0;
+    }
+    hostWait = req->hasParam("w") ? req->getParam("w")->value().toInt() : 0;
     // the master's own copy of the same sensToLevel() map. It should already
     // match what the slider set; accepted so the master stays the authority on
     // the number the flag was actually decided with.
@@ -974,7 +1024,9 @@ void webBegin() {
                "\"calibrated_on\":\"none\",\"model\":false,\"device_connected\":true,"
                "\"device_port\":\"esp32\",\"sensitivity\":%.3f,\"thr_level\":%.3f,"
                "\"threshold\":0}",
-               COND_FS, COND_FS * 15, devId.c_str(), hostSens, hostThrLevel);
+               COND_FS, COND_FS * 15,
+               hostSubject[0] ? hostSubject : devId.c_str(),
+               hostSens, hostThrLevel);
       client->text(hello);
     }
   });
@@ -1054,12 +1106,16 @@ void wsTick() {
     snprintf(levelStr, sizeof(levelStr), "null");
   }
 
-  char frame[1024];
+  // idx caps at ~208 chars and bvp at ~448, plus ~290 of scaffolding once
+  // state and warm_s are in it. 1024 left barely 70 bytes of headroom and a
+  // truncated frame is invalid JSON the dashboard silently drops.
+  char frame[1280];
   snprintf(frame, sizeof(frame),
            "{\"type\":\"f\",\"running\":true,\"elapsed\":%.1f,\"buf\":%lu,\"win\":%d,"
            "\"idx\":[%s],\"bvp\":[%s],\"level\":%s,\"flag\":%s,\"score\":0,"
            "\"bpm\":%s,\"spo2\":%s,\"quality\":null,\"label\":\"-\",\"sens\":%.3f,"
-           "\"thr_level\":%.3f,"
+           "\"thr_level\":%.3f,\"state\":\"%s\",\"warm_s\":%ld,"
+           "\"subject\":\"%s\","
            "\"device\":{\"connected\":true,\"port\":\"esp32\",\"contact\":%s,\"dropped\":%lu}}",
            condTotal / (float)COND_FS, (unsigned long)buffered, COND_FS * 60,
            idx, bvp, levelStr,
@@ -1068,6 +1124,12 @@ void wsTick() {
            (finger && validSpo2 && spo2 >= 70 && spo2 <= 100)
                ? String(spo2).c_str() : "null",
            hostSens, hostThrLevel,
+           // `fresh` is drawStatus()'s local; here freshness is judged on its
+           // own, without requiring a finger -- the master's reason for having
+           // no verdict is worth reporting either way.
+           ((hostFlag >= 0 && (millis() - hostFlagMs) < HOST_BPM_TTL)
+                ? hostState : "stale"), (long)hostWait,
+           hostSubject[0] ? hostSubject : devId.c_str(),
            finger ? "true" : "false",
            (unsigned long)condDropped);
   ws.textAll(frame);

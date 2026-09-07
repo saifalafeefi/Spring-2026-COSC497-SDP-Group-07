@@ -53,6 +53,8 @@
   .wear select{flex:1;min-width:0}
   .base{color:var(--dim);font-size:11px;margin:0 0 10px;min-height:16px}
   .qual{font-size:11px;color:var(--dim);min-height:16px;margin-top:2px}
+  .stale{font-size:11px;color:#f0c674;background:#3a2a12;border:1px solid #5a4426;
+         border-radius:6px;padding:6px 8px;margin:0 0 10px;line-height:1.4}
   /* the host keeps the detailed history; the board keeps a short one */
   .hist{margin-top:14px;border-top:1px solid var(--line);padding-top:11px}
   .hist h3{font-size:11px;font-weight:600;color:var(--dim);margin:0 0 7px;
@@ -85,7 +87,7 @@
 const $ = i => document.getElementById(i);
 let devices = [], subjects = [], events = {};
 // the API this page was written against; the master reports its own in /api/devices
-const NEEDS_API = 3;
+const NEEDS_API = 5;
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -128,6 +130,7 @@ function buildCard(id){
       <button class="pen js-del-sub" title="Delete this subject">&#128465;</button>
     </div>
     <div class="base js-base"></div>
+    <div class="stale js-stale" hidden></div>
     <div class="verdict js-verdict"></div>
     <div class="qual js-qual"></div>
     <div class="why js-why"></div>
@@ -145,7 +148,8 @@ function buildCard(id){
              sel:q('sel'), base:q('base'), verdict:q('verdict'), why:q('why'),
              fill:q('fill'), bpm:q('bpm'), spo2:q('spo2'), contact:q('contact'),
              actions:q('actions'), hist:q('hist'), histTitle:q('histtitle'),
-             qual:q('qual'), renameDev:q('rename-dev'), renameSub:q('rename-sub'),
+             qual:q('qual'), stale:q('stale'),
+             renameDev:q('rename-dev'), renameSub:q('rename-sub'),
              delSub:q('del-sub'), subjSig:null};
 
   c.sel.onchange = () => assign(id, c.sel.value);
@@ -172,6 +176,10 @@ function updateCard(d){
                                why=d.subject.code+' has no baseline yet'; }
   else if(!d.contact){         verdict='—';       cls='none';
                                why='no finger on the sensor'; }
+  else if(d.state==='warm'){   verdict='WARMING';  cls='none';
+                               why='filling the 60 s window'; }
+  else if(d.state==='hold'){   verdict='—';       cls='none';
+                               why='movement — holding the verdict'; }
   else if(warming){            verdict='—';       cls='none';
                                why='warming up · '+Math.ceil((d.win-d.buf)/64)+'s left'; }
   else if(d.flag){             verdict='STRESSED';cls='flag';
@@ -216,6 +224,15 @@ function updateCard(d){
   const vis = d.subject ? 'visible' : 'hidden';
   c.renameSub.style.visibility = vis;
   c.delSub.style.visibility = vis;
+
+  // a baseline is remembered perfectly and can still stop describing today's
+  // finger: measured on this rig the calibrated calm median moved +48% then
+  // +22% between sessions, each shift wider than the whole 0-100% band.
+  const fit = d.baseline_fit;
+  c.stale.hidden = !(fit && fit.stale);
+  if(fit && fit.stale)
+    setText(c.stale, "⚠ this baseline does not fit today's signal — calm is reading "
+      + Math.round(fit.offset * 100) + "% of the band. Recalibrate.");
 
   const b = d.baseline;
   setText(c.base, b
@@ -397,8 +414,14 @@ async function tick(){
   const stale = $('stale');
   if(r.api !== NEEDS_API){
     stale.hidden = false;
-    setText(stale, 'This page expects API v' + NEEDS_API + ' but the master speaks v'
-      + (r.api || 1) + ' — it is running older code. Restart it: python3 -m anomaly.fleet');
+    // which side is behind decides what to do about it. telling someone to
+    // restart a master that is already newer than their page sends them in
+    // circles -- that case is a cached page and wants a reload.
+    setText(stale, (r.api || 1) < NEEDS_API
+      ? 'The master is running older code (API v' + (r.api || 1) + ', this page needs v'
+        + NEEDS_API + '). Restart it: python3 -m anomaly.fleet'
+      : 'This page is older than the master (page v' + NEEDS_API + ', master v' + r.api
+        + '). Hard-reload the browser: Ctrl+Shift+R');
   } else if(!stale.hidden) stale.hidden = true;
   setText($('sub'), `${devices.length} device${devices.length===1?'':'s'} on `
     + `${r.subnet}.0/24 · ${subjects.length} subject${subjects.length===1?'':'s'}`

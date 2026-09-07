@@ -347,6 +347,17 @@ input{font-family:inherit}
               </div>
 
               <div style="background:#fff;border:1px solid #E6EBF2;border-radius:20px;box-shadow:0 6px 20px rgba(16,24,40,.06);padding:22px">
+                <div style="font-weight:700;font-size:15px">Dashboard refresh</div>
+                <div style="font-size:13px;color:#6B7787;margin-top:3px">How often this screen redraws. Detection is unaffected — the master scores once a second regardless. Slower is easier to read and lighter on the browser.</div>
+                <div style="display:flex;gap:5px;margin-top:16px;background:#F0F4F9;padding:4px;border-radius:12px;max-width:420px">
+                  <sc-for list="{{ rate.options }}" as="opt" hint-placeholder-count="4">
+                    <button onClick="{{ opt.onClick }}" style="flex:1;padding:9px 4px;border-radius:9px;font-weight:600;font-size:13px;color:{{ opt.color }};background:{{ opt.bg }};box-shadow:{{ opt.shadow }}">{{ opt.label }}</button>
+                  </sc-for>
+                </div>
+                <div style="font-size:12px;color:#6B7787;margin-top:8px">{{ rate.hint }}</div>
+              </div>
+
+              <div style="background:#fff;border:1px solid #E6EBF2;border-radius:20px;box-shadow:0 6px 20px rgba(16,24,40,.06);padding:22px">
                 <div style="font-weight:700;font-size:15px">Device &amp; data source</div>
                 <div style="display:flex;align-items:center;gap:14px;margin-top:16px;padding-bottom:16px;border-bottom:1px solid #F0F4F9">
                   <div style="flex:1;min-width:0">
@@ -547,14 +558,15 @@ class Component extends DCLogic {
     elapsed:0, buf:0, win:3840, fs:64, winS:60,
     level:0, flag:false, bpm:null, spo2:null, motion:0, quality:1, qualityLabel:'good', label:'calm',
     thrLevel:0.42, sensitivity:0.5, preset:'Balanced',
-    statusState:'paused', flagTimeStr:'', events:[],
+    statusState:'paused', flagTimeStr:'', events:[], warming:false, warmS:0, uiMs:140,
     poorInject:false, toast:null,
     patients:[],          // unused — Patients tab is built live from the stream
     reviewEvents:[],       // unused — History tab is built live from st.events
     noteOpen:null,
     // restore a persisted session so a browser refresh doesn't wipe everything — see persist()
     ...(()=>{ try{ const s=JSON.parse(localStorage.getItem('pulsewatch_v1')||'{}');
-      return { route:(s.route==='patients'?'monitor':(s.route||'monitor')),
+      return { uiMs:(typeof s.uiMs==='number'?s.uiMs:140),
+               route:(s.route==='patients'?'monitor':(s.route||'monitor')),
                events:Array.isArray(s.events)?s.events:[],
                subjectName:s.subjectName||'S05' };
     }catch(e){ return {}; } })()
@@ -571,13 +583,40 @@ class Component extends DCLogic {
     window.addEventListener('resize', this._onResize);
     this._onUnload = ()=>this.persist(); window.addEventListener('beforeunload', this._onUnload);
     // restore the open-episode tracker so a refresh CONTINUES the episode (no duplicate row)
-    try{ const s=JSON.parse(localStorage.getItem('pulsewatch_v1')||'{}'); this.curEvent = s.curEvent||null; }catch(e){ this.curEvent=null; }
+    try{ const s=JSON.parse(localStorage.getItem('pulsewatch_v2')||'{}'); this.curEvent = s.curEvent||null; }catch(e){ this.curEvent=null; }
     if(!this.curEvent){ const ev=this.state.events; if(ev.some(e=>e&&e.dur==='ongoing')) this.setState({events:ev.map(e=>(e&&e.dur==='ongoing')?{...e,dur:'—'}:e)}); }
     this.connectLive();   // there is nothing to sign in to; go straight to the stream
+    document.addEventListener('visibilitychange', this._onVis);
     this._raf = requestAnimationFrame(this.frame);
   }
-  persist(){ try{ localStorage.setItem('pulsewatch_v2', JSON.stringify({ route:this.state.route, events:this.state.events, subjectName:this.state.subjectName, curEvent:this.curEvent })); }catch(e){} }
-  componentWillUnmount(){ cancelAnimationFrame(this._raf); window.removeEventListener('resize',this._onResize); window.removeEventListener('beforeunload',this._onUnload); this.persist(); if(this.ws){try{this.ws.close()}catch(e){}} }
+
+  // A hidden tab gets NO requestAnimationFrame -- the browser stops it dead --
+  // and every state commit, flag decision and event log lives inside that loop.
+  // So switching tabs froze the monitor and silently lost any episode that
+  // started while you were away. When hidden the same work runs on a timer, and
+  // (for a live board) off the websocket itself, which keeps arriving whether
+  // the tab is looked at or not. Only the drawing is skipped: nothing to draw to.
+  _onVis = ()=>{
+    if(document.hidden){
+      cancelAnimationFrame(this._raf); this._raf=null;
+      if(!this._bg) this._bg=setInterval(this.bgTick, 1000);
+    } else {
+      if(this._bg){ clearInterval(this._bg); this._bg=null; }
+      this.lastTs=0; this.lastPaint=0;
+      if(!this._raf) this._raf=requestAnimationFrame(this.frame);
+    }
+  };
+  bgTick = ()=>{
+    const now=(window.performance&&performance.now)?performance.now():Date.now();
+    let dt=(now-(this.lastTs||now))/1000; this.lastTs=now;
+    if(dt<0) dt=0; if(dt>2) dt=2;
+    if(this.state.calibOpen && !this.state.useLive){ this.stepCalib(dt); }
+    else if(this.state.running && !this.state.useLive){ this.stepSim(dt); }
+    this.flushPaint();
+    if(now-(this.lastSave||0)>2000){ this.lastSave=now; this.persist(); }
+  };
+  persist(){ try{ localStorage.setItem('pulsewatch_v2', JSON.stringify({ route:this.state.route, events:this.state.events, uiMs:this.state.uiMs, subjectName:this.state.subjectName, curEvent:this.curEvent })); }catch(e){} }
+  componentWillUnmount(){ cancelAnimationFrame(this._raf); if(this._bg) clearInterval(this._bg); document.removeEventListener('visibilitychange', this._onVis); window.removeEventListener('resize',this._onResize); window.removeEventListener('beforeunload',this._onUnload); this.persist(); if(this.ws){try{this.ws.close()}catch(e){}} }
 
   // ---------- scenario ----------
   lerp(a,b,t){ return a+(b-a)*t; }
@@ -599,7 +638,7 @@ class Component extends DCLogic {
     if(this.state.running && _bpm>0){ this.beatPhase=(this.beatPhase||0)+dt*(_bpm/60)*6.2832; const _bc=Math.floor(this.beatPhase/6.2832); if(this.beatMark==null){this.beatMark=_bc;} else if(_bc>this.beatMark){this.beatMark=_bc; this.beatEnv=1;} }
     this.beatEnv=Math.max(0,(this.beatEnv||0)-dt*5);
     this.drawWave(); this.drawTrend(); this.drawGauge();
-    if(now-this.lastPaint>140){ this.lastPaint=now; this.flushPaint(); if(this.historyRef.current) this.drawHistory(); if(this.methodRef.current) this.drawMethod(); }
+    if(now-this.lastPaint>(this.state.uiMs||140)){ this.lastPaint=now; this.flushPaint(); if(this.historyRef.current) this.drawHistory(); if(this.methodRef.current) this.drawMethod(); }
     if(now-(this.lastSave||0)>2000){ this.lastSave=now; this.persist(); }
     this._raf=requestAnimationFrame(this.frame);
   };
@@ -623,11 +662,17 @@ class Component extends DCLogic {
 
   flushPaint(){
     const c=this.cur; if(!c){ return; }
-    const warming = c.buf < c.win;
+    // c.buf is the BOARD's buffer, which has been full for ages; the model
+    // lives on the master and its window is the one that has to fill. it now
+    // says so in every frame, and the board says CALM no longer stands in for
+    // "no verdict yet".
+    const mstate = c.state || null;
+    const warming = (mstate === 'warm') || (mstate === null && c.buf < c.win);
     this.smooth += ((c.level||0)-this.smooth)*0.16;
     const ql=this.qualityLabel(c.q);
     let flag=this.state.flag;
-    if(c.flagProvided){ flag=!!c.flag; }
+    if(mstate && mstate !== 'ok'){ flag=false; this.flagSince=null; this.calmSince=null; }
+    else if(c.flagProvided){ flag=!!c.flag; }
     else if(ql==='poor' || warming){ flag=false; this.flagSince=null; this.calmSince=null; }
     else {
       if(this.smooth > this.state.thrLevel){ if(this.flagSince==null)this.flagSince=c.elapsed; this.calmSince=null; if(c.elapsed-this.flagSince>2) flag=true; }
@@ -660,14 +705,16 @@ class Component extends DCLogic {
     if(this.state.useLive && !this.state.connected) status='offline';
     else if(!this.state.running) status='paused';
     else if(c.noContact) status='noContact';
-    else if(ql==='poor') status='poorSignal';
+    else if(mstate === 'stale' || mstate === 'none' || mstate === 'idle')
+      status='noVerdict';
+    else if(mstate === 'hold' || ql==='poor') status='poorSignal';
     else if(warming) status='warming';
     else if(flag) status='flagged';
     else if(this.smooth > this.state.thrLevel*0.66) status='caution';
     else status='calm';
     // history sampling
     if(c.elapsed - this.lastHist > 0.5 || this.lastHist===0){ this.lastHist=c.elapsed; this.levelHist.push({t:c.elapsed, level:c.level, hr:c.bpm}); if(this.levelHist.length>800) this.levelHist.shift(); }
-    this.setState({ statusState:status, flag:flag, flagTimeStr:flagTimeStr, level:this.smooth, elapsed:c.elapsed, buf:c.buf, bpm:c.bpm, spo2:c.spo2, motion:c.motion, quality:c.q, qualityLabel:ql, label:c.label });
+    this.setState({ statusState:status, flag:flag, warmS:c.warmS||0, warming:warming, flagTimeStr:flagTimeStr, level:this.smooth, elapsed:c.elapsed, buf:c.buf, bpm:c.bpm, spo2:c.spo2, motion:c.motion, quality:c.q, qualityLabel:ql, label:c.label });
   }
 
   // ---------- calibration ----------
@@ -714,8 +761,17 @@ class Component extends DCLogic {
       // noise is amplitude-consistent. blank them rather than assert them.
       const nc = !!(m.device && m.device.contact===false);
       this.simClock=m.elapsed||this.simClock;
-      this.cur={ level:m.level??0, bpm:(nc||m.bpm==null?null:m.bpm), spo2:(nc||m.spo2==null?null:m.spo2), motion:(m.motion!=null?m.motion:0), q:(nc?null:q), buf:m.buf??this.state.win, win:m.win??this.state.win, elapsed:m.elapsed||0, label:m.label||'—', flagProvided:true, flag:!!m.flag, noContact:nc };
+      this.cur={ state:m.state||null, warmS:m.warm_s||0, level:m.level??0, bpm:(nc||m.bpm==null?null:m.bpm), spo2:(nc||m.spo2==null?null:m.spo2), motion:(m.motion!=null?m.motion:0), q:(nc?null:q), buf:m.buf??this.state.win, win:m.win??this.state.win, elapsed:m.elapsed||0, label:m.label||'—', flagProvided:true, flag:!!m.flag, noContact:nc };
+      // the name can change while the page is open -- rename on the roster and
+      // the board's own dashboard should follow, not wait for a reload
+      if(m.subject && m.subject !== this.state.subjectName)
+        this.setState({subject:m.subject, subjectName:m.subject});
       if(m.running!=null && m.running!==this.state.running) this.setState({running:m.running});
+      if(document.hidden){
+        const n=(window.performance&&performance.now)?performance.now():Date.now();
+        if(n-(this.lastPaint||0)>Math.min(1000, this.state.uiMs||140)){
+          this.lastPaint=n; this.flushPaint(); }
+      }
     } else if(m.type==='thr'){
       // sensitivity retuned on the server (here or from the dev dashboard) — sync the gauge
       const s=this.state; const patch={};
@@ -752,10 +808,10 @@ class Component extends DCLogic {
     const cv=this.gaugeRef.current; if(!cv) return; const {ctx,w,h}=this.prep(cv); ctx.clearRect(0,0,w,h);
     const st=this.state; const cx=w/2, cy=h*0.5+8, r=Math.min(w*0.5,h*0.62)-15;
     const A0=Math.PI*0.75, A1=Math.PI*2.25, SW=A1-A0;
-    const warming=st.running&&st.buf<st.win;
+    const warming=st.running&&st.warming;
     const lvl=warming?0:Math.max(0,Math.min(1,st.level||0));
     const thr=Math.max(0.001,Math.min(1,st.thrLevel));
-    const ss=st.statusState; const muted=(ss==='warming'||ss==='paused'||ss==='offline'||ss==='poorSignal'||ss==='noContact');
+    const ss=st.statusState; const muted=(ss==='warming'||ss==='paused'||ss==='offline'||ss==='poorSignal'||ss==='noContact'||ss==='noVerdict');
     const r2=lvl/thr; const col=muted?'#CBD4DF':(r2>=1?'#F2645A':(r2>=0.66?'#F4B740':'#2DBE9E'));
     ctx.lineCap='round';
     ctx.beginPath(); ctx.arc(cx,cy,r,A0,A1); ctx.strokeStyle='#EAEFF5'; ctx.lineWidth=13; ctx.stroke();
@@ -919,11 +975,18 @@ class Component extends DCLogic {
   hero(){
     const st=this.state, ss=st.statusState;
     const rm=this.reduceMotion;
-    const nLeft=Math.max(0,Math.ceil((st.win-st.buf)/st.fs));
+    // The countdown belongs to the MASTER's window, not the board's: the board
+    // has been buffering since it booted, so (win-buf) is 0 and the hero read
+    // "Warming up — 0s left" from the moment the master started filling.
+    const nLeft = st.warmS != null && st.warmS > 0
+                ? st.warmS : Math.max(0, Math.ceil((st.win - st.buf) / st.fs));
     const map={
       offline:{word:'Disconnected',sub:'trying to reconnect…',color:'#94A3B8',soft:'#EEF1F5',glow:'rgba(148,163,184,.16)',iconPath:'M4 4l16 16 M12 3a9 9 0 0 0-9 9 M21 12a9 9 0 0 0-3.5-7.1',aura:'none'},
       paused:{word:'Paused',sub:'press Start to resume monitoring',color:'#6B7787',soft:'#F0F4F9',glow:'rgba(107,119,135,.13)',iconPath:'M9 5v14 M15 5v14',aura:'none'},
       poorSignal:{word:'Signal weak — hold still',sub:'adjust the sensor and stay still',color:'#7C8898',soft:'#EEF1F5',glow:'rgba(148,163,184,.16)',iconPath:'M3 12c2-4 4-4 6 0s4 4 6 0 4-4 6 0',aura:'none'},
+      noVerdict:{word:'No verdict yet',sub:'waiting for the master to score this board',
+        color:'#7C8898',soft:'#EEF1F5',glow:'rgba(148,163,184,.16)',
+        iconPath:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 8v5',aura:'none'},
       warming:{word:'Warming up — '+nLeft+'s left',sub:'filling the first '+st.winS+'s window',color:'#5B8DEF',soft:'#ECF2FE',glow:'rgba(91,141,239,.17)',iconPath:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l3 2',aura:'none'},
       flagged:{word:'Needs review — possible stress',sub:'flagged at '+(st.flagTimeStr||this.fmt(st.elapsed))+' · peaked '+Math.round(st.level*100)+'%',color:'#F2645A',soft:'#FDECEA',glow:'rgba(242,100,90,.24)',iconPath:'M12 4l9 16H3z M12 10v4 M12 17h.01',aura: rm?'none':'aura 2.6s ease-in-out infinite'},
       caution:{word:'Slightly elevated',sub:'watching for sustained change…',color:'#E0982A',soft:'#FEF6E6',glow:'rgba(244,183,64,.20)',iconPath:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 8v5 M12 16h.01',aura:'none'},
@@ -958,7 +1021,7 @@ class Component extends DCLogic {
     // gauge color escalate
     const r = thr>0?(st.level/thr):0;
     let gColor = r>=1?'#F2645A':(r>=0.66?'#F4B740':'#2DBE9E');
-    if(st.statusState==='poorSignal'||st.statusState==='noContact'||st.statusState==='warming'||st.statusState==='paused'||st.statusState==='offline') gColor='#C3CCD8';
+    if(st.statusState==='poorSignal'||st.statusState==='noContact'||st.statusState==='warming'||st.statusState==='paused'||st.statusState==='offline'||st.statusState==='noVerdict') gColor='#C3CCD8';
 
     const poor = st.qualityLabel==='poor';
     const ql=st.qualityLabel;
@@ -971,7 +1034,7 @@ class Component extends DCLogic {
     const segShadow=p=> (st.preset===p?'0 1px 3px rgba(16,24,40,.12)':'none');
     const segColor=p=> (st.preset===p?'#1B2430':'#8693A4');
 
-    const running=st.running, warming=st.buf<st.win;
+    const running=st.running, warming=st.warming;
     const events=st.events.map(e=>({ id:e.id, time:e.time, peak:e.peak, dur:e.dur, onClick:()=>this.go('history') }));
 
     const sourceLive = st.source==='device';
@@ -1020,8 +1083,9 @@ class Component extends DCLogic {
       levelPct: (warming&&running)?'—':lvlPct+'%',
       gaugeWidth: ((warming&&running)?0:lvlPct)+'%', gaugeColor:gColor,
       thrLeft:(thr*100)+'%', thrPct:Math.round(thr*100)+'%',
-      gaugeCenterBig: (running&&warming) ? Math.max(0,Math.ceil((st.win-st.buf)/st.fs))+'s' : (st.statusState==='paused'?'—':(st.statusState==='offline'?'—':(st.statusState==='noContact'?'—':lvlPct+'%'))),
-      gaugeCenterLabel: (running&&warming) ? 'warming up' : (st.statusState==='paused'?'paused':(st.statusState==='offline'?'offline':(st.statusState==='noContact'?'no finger':(st.statusState==='poorSignal'?'signal weak':'deviation')))),
+      gaugeCenterBig: (running&&warming) ? (st.warmS ? st.warmS+'s'
+                        : Math.max(0,Math.ceil((st.win-st.buf)/st.fs))+'s') : (st.statusState==='noVerdict'?'—':(st.statusState==='paused'?'—':(st.statusState==='offline'?'—':(st.statusState==='noContact'?'—':lvlPct+'%')))),
+      gaugeCenterLabel: (running&&warming) ? 'warming up' : (st.statusState==='noVerdict'?'no verdict':(st.statusState==='paused'?'paused':(st.statusState==='offline'?'offline':(st.statusState==='noContact'?'no finger':(st.statusState==='poorSignal'?'signal weak':'deviation'))))),
       heroBreathe: this.reduceMotion?'none':'breathe 6.5s ease-in-out infinite',
       // vitals
       vit:{ bpm: st.bpm==null?'—':st.bpm, spo2: st.spo2==null?'—':st.spo2, motion: st.motion<0.12?'Still':'Active', motionHint: st.motion<0.12?'at rest':'moving' },
@@ -1036,6 +1100,18 @@ class Component extends DCLogic {
         cautiousBg:segBg('Cautious'), cautiousShadow:segShadow('Cautious'), cautiousColor:segColor('Cautious'),
         balancedBg:segBg('Balanced'), balancedShadow:segShadow('Balanced'), balancedColor:segColor('Balanced'),
         strictBg:segBg('Strict'), strictShadow:segShadow('Strict'), strictColor:segColor('Strict') },
+      // dashboard refresh rate. this only paces the SCREEN: flushPaint still
+      // runs on every websocket frame while the tab is hidden, so a flag raised
+      // at a slow refresh is still logged the moment it happens.
+      rate:{ options: [{ms:140,label:'Live'},{ms:500,label:'0.5s'},
+                       {ms:1000,label:'1s'},{ms:3000,label:'3s'}].map(o=>({
+               label:o.label,
+               onClick:()=>{ this.lastPaint=0; this.setState({uiMs:o.ms}); this.persist(); },
+               bg:(st.uiMs===o.ms?'#fff':'transparent'),
+               shadow:(st.uiMs===o.ms?'0 1px 3px rgba(16,24,40,.12)':'none'),
+               color:(st.uiMs===o.ms?'#1B2430':'#8693A4') })),
+             hint: st.uiMs<=140 ? 'Redraws as fast as the browser allows.'
+                 : 'Redraws every ' + (st.uiMs/1000) + ' s. Detection still runs once a second.' },
       // charts
       waveRef:this.waveRef, trendRef:this.trendRef, gaugeRef:this.gaugeRef,
       // events
