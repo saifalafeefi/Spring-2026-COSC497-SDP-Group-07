@@ -28,6 +28,7 @@
   .verdict{font-size:26px;font-weight:700;margin:6px 0 2px}
   .verdict.calm{color:var(--ok)} .verdict.flag{color:var(--bad)}
   .verdict.none{color:var(--dim)}
+  .verdict.hold{color:var(--warn)}
   .why{color:var(--dim);font-size:12px;min-height:17px}
   .bar{height:7px;background:#0d1218;border-radius:4px;margin:11px 0 3px;overflow:hidden}
   .bar>div{height:100%;background:var(--accent);width:0;transition:width .25s}
@@ -59,6 +60,8 @@
   .hist{margin-top:14px;border-top:1px solid var(--line);padding-top:11px}
   .hist h3{font-size:11px;font-weight:600;color:var(--dim);margin:0 0 7px;
            text-transform:uppercase;letter-spacing:.06em}
+  .histhead{display:flex;align-items:baseline;gap:8px}
+  .histhead h3{flex:1}
   .ev{display:flex;align-items:baseline;gap:8px;font-size:12px;padding:3px 0}
   .ev .t{color:var(--dim);flex:none}
   .ev .pk{color:var(--bad);font-weight:600}
@@ -72,22 +75,58 @@
   .srow:first-child{border-top:0}
   .sname{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .smeta{color:var(--dim);font-size:11px}
+  /* tuning: live knobs, each saying what it does */
+  #tune{padding:0 22px 4px;display:none}
+  #tune.on{display:block}
+  .tunecard{background:var(--card);border:1px solid var(--line);border-radius:11px;
+            padding:18px 20px;margin-top:16px}
+  .tunehead{display:flex;align-items:baseline;gap:10px;margin-bottom:4px}
+  .tunehead h2{font-size:14px;margin:0;font-weight:650}
+  .tunehead span{color:var(--dim);font-size:12px;flex:1}
+  .tunegrid{display:grid;gap:14px;margin-top:14px;
+            grid-template-columns:repeat(auto-fill,minmax(310px,1fr))}
+  .trow{background:#131a22;border:1px solid var(--line);border-radius:9px;padding:12px 14px}
+  .trow .tl{display:flex;align-items:baseline;gap:8px}
+  .trow .tl b{font-size:13px;font-weight:650}
+  .trow .tl code{margin-left:auto;font-size:10px;color:var(--dim);background:none;padding:0}
+  .trow .tv{color:var(--accent);font-weight:650;font-size:13px;
+            font-variant-numeric:tabular-nums}
+  .trow input[type=range]{width:100%;margin:9px 0 2px;accent-color:var(--accent)}
+  .trow .th{color:var(--dim);font-size:11px;line-height:1.5}
+  .tunefoot{color:var(--dim);font-size:11px;margin-top:14px;display:flex;
+            align-items:center;gap:10px}
+  .tunefoot button{padding:5px 11px;font-size:12px}
 </style>
 
 <header>
   <h1>Pulse Fleet</h1>
   <div class="sub" id="sub">scanning…</div>
+  <button id="tunebtn">Tuning</button>
   <button id="newsub">New subject</button>
   <button id="rescan">Rescan</button>
 </header>
 <div id="stale" hidden></div>
+<section id="tune">
+  <div class="tunecard">
+    <div class="tunehead">
+      <h2>Tuning</h2>
+      <span>changes apply on the next scoring tick — no restart — and are kept
+            across restarts</span>
+    </div>
+    <div class="tunegrid" id="tunegrid"></div>
+    <div class="tunefoot">
+      <button id="tunereset">Reset to defaults</button>
+      <span id="tunestat"></span>
+    </div>
+  </div>
+</section>
 <main id="grid"><div class="empty">looking for devices…</div></main>
 
 <script>
 const $ = i => document.getElementById(i);
 let devices = [], subjects = [], events = {};
 // the API this page was written against; the master reports its own in /api/devices
-const NEEDS_API = 5;
+const NEEDS_API = 11;
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -141,18 +180,24 @@ function buildCard(id){
       <div class="v"><b class="js-contact">—</b><span>finger</span></div>
     </div>
     <div class="js-actions"></div>
-    <div class="hist"><h3 class="js-histtitle">History</h3><div class="js-hist"></div></div>`;
+    <div class="hist">
+      <div class="histhead"><h3 class="js-histtitle">History</h3>
+        <button class="pen js-clear" title="Delete this board's flag history"
+                hidden>clear</button></div>
+      <div class="js-hist"></div></div>`;
 
   const q = c => root.querySelector('.js-' + c);
   const c = {root, name:q('name'), ip:q('ip'), dot:root.querySelector('.dot'),
              sel:q('sel'), base:q('base'), verdict:q('verdict'), why:q('why'),
              fill:q('fill'), bpm:q('bpm'), spo2:q('spo2'), contact:q('contact'),
              actions:q('actions'), hist:q('hist'), histTitle:q('histtitle'),
+             clear:q('clear'),
              qual:q('qual'), stale:q('stale'),
              renameDev:q('rename-dev'), renameSub:q('rename-sub'),
              delSub:q('del-sub'), subjSig:null};
 
   c.sel.onchange = () => assign(id, c.sel.value);
+  c.clear.onclick = () => clearHistory(id);
   c.renameDev.onclick = () => renameDevice(id);
   c.renameSub.onclick = () => { const d = devices.find(x => x.id === id);
                                 if(d && d.subject) renameSubject(d.subject.id); };
@@ -182,6 +227,9 @@ function updateCard(d){
                                why='movement — holding the verdict'; }
   else if(warming){            verdict='—';       cls='none';
                                why='warming up · '+Math.ceil((d.win-d.buf)/64)+'s left'; }
+  else if(d.flag && d.level != null && d.level < d.thr_level){
+                               verdict='CLEARING'; cls='hold';
+                               why='was flagged · deviation '+pct+'% is back under the line'; }
   else if(d.flag){             verdict='STRESSED';cls='flag';
                                why='deviation '+pct+"% · above "+d.subject.code+"'s baseline"; }
   else {                       verdict='CALM';    cls='calm';
@@ -231,8 +279,8 @@ function updateCard(d){
   const fit = d.baseline_fit;
   c.stale.hidden = !(fit && fit.stale);
   if(fit && fit.stale)
-    setText(c.stale, "⚠ this baseline does not fit today's signal — calm is reading "
-      + Math.round(fit.offset * 100) + "% of the band. Recalibrate.");
+    setText(c.stale, "⚠ flagging " + Math.round(fit.flag_rate * 100)
+      + "% of the time — calibration aims for 10%. Recalibrate this subject.");
 
   const b = d.baseline;
   setText(c.base, b
@@ -253,6 +301,7 @@ function updateCard(d){
 
   setText(c.histTitle, 'History' + (d.subject ? ' · '+d.subject.code : ''));
   const ev = events[d.id] || [];
+  c.clear.hidden = !ev.length;
   setHTML(c.hist, ev.length
     ? ev.slice(0,6).map(e => '<div class="ev'+(e.acknowledged?' acked':'')+'">'
         + '<span class="t">'+ago(e.t_start)+'</span>'
@@ -311,6 +360,21 @@ async function ack(id, verdict){
   refreshEvents(); refreshSubjects();
 }
 
+// Flags pile up through every test and every knock on the sensor, and a
+// history full of an afternoon of debugging hides the one flag that mattered.
+// Scoped to the board, because the board's card is what shows them.
+async function clearHistory(id){
+  const n = (events[id] || []).length;
+  if(!n) return;
+  if(!confirm(["Delete this board's flag history?", '',
+               n + ' flag' + (n === 1 ? '' : 's') + ' will be removed.',
+               'The saved waveforms stay on disk in flags/.'].join(String.fromCharCode(10)))) return;
+  const r = await req('/api/devices/' + id + '/events', 'DELETE');
+  if(!r) return;
+  events[id] = [];
+  await refreshEvents(); await refreshSubjects(); tick();
+}
+
 async function renameDevice(id){
   const d = devices.find(x => x.id === id);
   const name = prompt('Name for this board (its id stays ' + id + '):', d ? d.name : '');
@@ -359,6 +423,56 @@ $('newsub').onclick = async () => {
   await refreshSubjects(); tick();
 };
 $('rescan').onclick = async () => { await post('/api/rescan'); tick(); };
+
+// ---------------------------------------------------------------- tuning
+//
+// Built once from the master's own description of each knob, so the page never
+// has to know what the constants are or what they mean -- add one server-side
+// and it appears here with its help text.
+let tuneDefaults = null;
+
+function tuneRow(t){
+  const row = document.createElement('div');
+  row.className = 'trow';
+  const dec = t.step < 1 ? (String(t.step).split('.')[1] || '').length : 0;
+  row.innerHTML = `
+    <div class="tl"><b>${esc(t.label)}</b>
+      <span class="tv"></span><code>${esc(t.key)}</code></div>
+    <input type="range" min="${t.min}" max="${t.max}" step="${t.step}">
+    <div class="th">${esc(t.help)}</div>`;
+  const val = row.querySelector('.tv'), sl = row.querySelector('input');
+  const show = v => { val.textContent = Number(v).toFixed(dec) + (t.unit ? ' '+t.unit : ''); };
+  sl.value = t.value; show(t.value);
+  sl.oninput  = () => show(sl.value);                       // label follows the drag
+  sl.onchange = async () => {                               // commit on release
+    const r = await post('/api/tuning', {[t.key]: Number(sl.value)});
+    if(r && r.changed && t.key in r.changed){
+      sl.value = r.changed[t.key]; show(r.changed[t.key]);  // server clamps
+      setText($('tunestat'), 'applied ' + t.key + ' = ' + r.changed[t.key]);
+    }
+  };
+  return row;
+}
+
+async function loadTuning(){
+  let r;
+  try{ r = await (await fetch('/api/tuning')).json(); }catch(e){ return; }
+  if(!tuneDefaults) tuneDefaults = Object.fromEntries(r.tuning.map(t => [t.key, t.value]));
+  const g = $('tunegrid');
+  g.innerHTML = '';
+  r.tuning.forEach(t => g.appendChild(tuneRow(t)));
+}
+
+$('tunebtn').onclick = () => {
+  const on = $('tune').classList.toggle('on');
+  if(on && !$('tunegrid').children.length) loadTuning();
+};
+$('tunereset').onclick = async () => {
+  if(!tuneDefaults) return;
+  await post('/api/tuning', tuneDefaults);
+  await loadTuning();
+  setText($('tunestat'), 'reset to the values this master started with');
+};
 
 // ---------------------------------------------------------------- polling
 

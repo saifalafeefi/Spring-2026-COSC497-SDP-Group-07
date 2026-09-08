@@ -234,7 +234,7 @@ $("btnPause").onclick=()=>send("pause");
 
 // ---- detection sensitivity (operating point) ----
 function sensBand(v){ return v>=0.64?"Cautious":(v<=0.37?"Strict":"Balanced"); }
-function sensLevel(v){ return Math.min(0.85,Math.max(0.12,0.62-0.40*v)); }  // == server/watch map
+function sensLevel(v){ return 0.10 + 0.80*Math.min(1,Math.max(0,v)); }   // == fleet.sens_to_level: the slider IS the threshold
 function updateSensReadout(v){
   setText($("sens-band"), sensBand(v));
   setText($("sens-thr"), Math.round(sensLevel(v)*100)+"%");

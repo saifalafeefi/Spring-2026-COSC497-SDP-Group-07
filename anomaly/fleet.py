@@ -63,12 +63,148 @@ HTTP_TIMEOUT = 1.0
 # page against its OLD routes -- the page calls an endpoint that does not exist
 # yet and the browser reports a bare "failed". Bump this whenever a route is
 # added or changed; the page checks it and says plainly that a restart is due.
-API_VERSION = 5
+API_VERSION = 11
 
 # how long a board can go without a finger on it before its session is over.
 # generous on purpose: a session is a stretch of monitoring, and closing one
 # every time somebody scratches their nose would shred the history into confetti.
 SESSION_IDLE_S = 120.0
+
+# --- self-referencing scale -------------------------------------------------
+# A calibration used to store WHERE this person's calm sat. That number moves
+# the moment the sensor is re-placed: measured on 27 subjects recorded at two
+# placements in the same session, the shift is 1.60 robust sigmas at the median
+# and 10.60 at p90 -- wider than the whole band, which is why a baseline from
+# yesterday reads today's calm as 100% stressed.
+#
+# What does NOT move is the shape: how far above their own calm this person's
+# stress sits. So the centre and the spread are re-estimated continuously from
+# the live signal, and calibration stores only k_sigma. Measured cost of that
+# swap: placement error 1.60 -> 0.34 sigmas (p90 10.60 -> 0.78), stress effect
+# d 2.81 -> 1.55 (about AUC 0.86, still better than the cross-subject 0.759).
+NORM_N = 180          # scores the live centre/spread are taken over (~3 min)
+NORM_MIN = 20         # below this there is not enough to normalise against
+NORM_Q = 20           # percentile of recent scores taken as "calm right now"
+Z_FULL = 6.0          # sigmas that read as 100% on the level bar
+K_DEFAULT = 5.0       # sigmas to flag at, before anyone has calibrated.
+                      # measured: the live z of calm sits at p50 ~1.1 and
+                      # p90 ~5.0, so 3.0 flagged a fifth of a calm session.
+# A spread of nearly zero -- a very still stretch, or a stuck signal -- would
+# turn any tiny deviation into infinite sigmas. Floor it at a fraction of the
+# centre so the scale cannot collapse.
+SPREAD_FLOOR = 0.02
+
+# --- the knobs that decide how twitchy the flag is --------------------------
+# EMA_ALPHA   how much of each new score is taken. lower = steadier number,
+#             slower to react. 0.35 reached 63% of a step in ~2.3 s; 0.20 takes
+#             ~6 s. this is the one to turn if the level looks jumpy.
+# FLAG_ON_S   seconds the score must STAY above the threshold before it flags.
+#             stress is sustained; a two-second excursion is a finger moving.
+# FLAG_OFF_S  seconds below before the flag clears, so it does not chatter.
+# Z_FULL      sigmas that read as 100% on the bar. bigger = a calmer-looking
+#             gauge for the same signal; it changes the display, not the flag.
+EMA_ALPHA = 0.20
+FLAG_ON_S = 5
+FLAG_OFF_S = 10
+
+
+# --- what the roster is allowed to turn, live ------------------------------
+# These are read out of the module globals on every scoring tick, so writing a
+# new value takes effect on the next second -- no restart. They are persisted
+# into the store's meta table so a restart keeps them.
+#
+# `mod` says where the name lives: None for this module, "quality" for the
+# signal-quality stage.
+TUNING = [
+    {"key": "EMA_ALPHA", "mod": None, "label": "Smoothing", "type": "float",
+     "min": 0.05, "max": 0.60, "step": 0.01,
+     "help": "How much of each new score is taken into the level. "
+             "LOWER = steadier number, slower to react (0.10 takes ~10 s to "
+             "catch up). HIGHER = twitchy but immediate. Turn this first if "
+             "the level jumps around."},
+    {"key": "FLAG_ON_S", "mod": None, "label": "Hold before flagging", "type": "int",
+     "min": 1, "max": 30, "step": 1, "unit": "s",
+     "help": "Seconds the score must STAY above the line before it counts. "
+             "HIGHER = ignores brief excursions, fewer false flags, slower to "
+             "catch a real one. LOWER = reacts sooner, flags more twitches."},
+    {"key": "FLAG_OFF_S", "mod": None, "label": "Hold before clearing", "type": "int",
+     "min": 1, "max": 60, "step": 1, "unit": "s",
+     "help": "Seconds below the line before the flag drops. HIGHER = one long "
+             "episode instead of several short ones. LOWER = the flag chatters "
+             "on and off around the threshold."},
+    {"key": "K_DEFAULT", "mod": None, "label": "Flag threshold", "type": "float",
+     "min": 1.0, "max": 8.0, "step": 0.1, "unit": "sigma",
+     "help": "Where the sensitivity slider is PARKED after a calibration, in "
+             "sigmas, for anyone not yet calibrated. It no longer sets the "
+             "threshold -- the slider does that directly now -- so this only "
+             "decides the starting position. Move the slider to change the line."},
+    {"key": "Z_FULL", "mod": None, "label": "Bar full scale", "type": "float",
+     "min": 2.0, "max": 15.0, "step": 0.5, "unit": "sigma",
+     "help": "How many sigmas read as 100% on the level bar. DISPLAY ONLY -- "
+             "it does not move the flag. HIGHER = a calmer-looking gauge for "
+             "the same signal. LOWER = the bar swings more."},
+    {"key": "NORM_N", "mod": None, "label": "Calm memory", "type": "int",
+     "min": 30, "max": 900, "step": 10, "unit": "s",
+     "help": "Seconds of recent signal the live calm centre and spread are "
+             "measured over. HIGHER = a steadier reference, slower to follow a "
+             "re-placed sensor. LOWER = adapts fast, but a long stress episode "
+             "can start looking normal."},
+    {"key": "ENVELOPE_RATIO", "mod": "quality", "label": "Movement gate", "type": "float",
+     "min": 1.2, "max": 6.0, "step": 0.1, "unit": "x",
+     "help": "A second of signal louder than this multiple of your quiet "
+             "amplitude is treated as movement and skipped. LOWER = stricter, "
+             "throws away more (and may refuse to score). HIGHER = lets more "
+             "movement reach the model, which is what makes taps flag."},
+    {"key": "SESSION_IDLE_S", "mod": None, "label": "Session timeout", "type": "int",
+     "min": 30, "max": 900, "step": 10, "unit": "s",
+     "help": "How long without a finger before the session is closed and the "
+             "history splits. HIGHER = brief breaks stay in one session. "
+             "LOWER = tighter sessions, more of them."},
+]
+
+
+def tuning_state() -> list:
+    """current value of every knob, with its metadata."""
+    out = []
+    for t in TUNING:
+        holder = quality if t["mod"] == "quality" else sys.modules[__name__]
+        d = dict(t)
+        d["value"] = getattr(holder, t["key"])
+        out.append(d)
+    return out
+
+
+def tuning_apply(vals: dict, db=None) -> dict:
+    """set knobs live, clamped to their declared range, and remember them."""
+    changed = {}
+    for t in TUNING:
+        if t["key"] not in vals:
+            continue
+        try:
+            v = float(vals[t["key"]])
+        except (TypeError, ValueError):
+            continue
+        v = max(t["min"], min(t["max"], v))
+        v = int(round(v)) if t["type"] == "int" else round(v, 4)
+        holder = quality if t["mod"] == "quality" else sys.modules[__name__]
+        setattr(holder, t["key"], v)
+        changed[t["key"]] = v
+        if db is not None:
+            db.meta_set("tune:" + t["key"], repr(v))
+    return changed
+
+
+def tuning_restore(db):
+    """re-apply whatever was set last time this master ran."""
+    vals = {}
+    for t in TUNING:
+        raw = db.meta_get("tune:" + t["key"])
+        if raw is not None:
+            try:
+                vals[t["key"]] = float(raw)
+            except ValueError:
+                pass
+    return tuning_apply(vals, db=None) if vals else {}
 
 # where the waveform behind each flag is kept, and whether to keep it at all.
 # the master already holds the raw signal in RAM to score it, so this stores
@@ -154,13 +290,22 @@ async def scan(subnet: str, concurrency: int = 64) -> list:
     return [f for f in found if f]
 
 
-def sens_to_level(sens: float) -> float:
-    """slider position -> where the flag threshold sits on the 0-1 level scale.
+# The slider IS the threshold, read straight off the bar: 0 puts the line at
+# 10%, 1.0 puts it at 90%. It used to be a curve around each person's calibrated
+# operating point, which meant the same slider position meant a different line
+# for every subject, the line moved when k_sigma changed under you, and it ran
+# backwards -- pushing the slider up made the threshold go down.
+THR_MIN, THR_MAX = 0.10, 0.90
 
-    the same curve Pulse Watch and serve.py use, so the line the UI draws and the
-    line the model actually flags at are finally the same number.
-    """
-    return min(0.85, max(0.12, 0.62 - 0.40 * float(sens)))
+
+def sens_to_level(sens: float) -> float:
+    """slider position -> the flag threshold, absolutely, on the 0-1 bar."""
+    return THR_MIN + (THR_MAX - THR_MIN) * min(1.0, max(0.0, float(sens)))
+
+
+def level_to_sens(level: float) -> float:
+    """the inverse: where to park the slider to sit at this threshold."""
+    return min(1.0, max(0.0, (float(level) - THR_MIN) / (THR_MAX - THR_MIN)))
 
 
 def push_flag(ip: str, flag: bool, level: float, thr_level: float,
@@ -182,6 +327,22 @@ def push_flag(ip: str, flag: bool, level: float, thr_level: float,
                                 "n": subject[:27]})
     try:
         with urllib.request.urlopen(f"http://{ip}/flag?{q}", timeout=2.0) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def push_calib(ip: str, phase: str, windows: int, target: int, can_commit: bool) -> bool:
+    """tell the board how the calibration is going, for it to pass on.
+
+    The board cannot calibrate anything -- it cannot score its own windows --
+    but its dashboard is where somebody stands when they press the button, so
+    the progress has to reach it.
+    """
+    q = urllib.parse.urlencode({"p": phase, "w": int(windows), "t": max(1, int(target)),
+                                "c": 1 if can_commit else 0})
+    try:
+        with urllib.request.urlopen(f"http://{ip}/calib?{q}", timeout=2.0) as r:
             return r.status == 200
     except Exception:
         return False
@@ -223,8 +384,15 @@ class Device:
         self.quality = None               # 0-1 for the last window assessed
         self.quality_note = ""            # why it was refused, if it was
         self.state = "none"               # ok | warm | hold | none
-        self.recent: deque = deque(maxlen=120)   # last 2 min of raw scores
+        self.recent: deque = deque(maxlen=NORM_N)   # live scores, for the scale
+        self.k_sigma = K_DEFAULT          # flag this many sigmas above live calm
+        self.centre = None                # this wear's calm, re-estimated live
+        self.spread = None
+        self.above = 0                    # consecutive seconds over the line
+        self.below = 0                    # and under it, for the hysteresis
+        self.flag_hist: deque = deque(maxlen=600)   # was it flagging? last 10 min
         self.refresh()
+        self.refresh_threshold()
 
     # ---- who is wearing this, and what is normal for them ----
 
@@ -238,13 +406,17 @@ class Device:
         b = self.db.active_baseline(self.subject["id"]) if self.subject else None
         self.thresholds = (b["threshold"], b["ref_lo"], b["ref_hi"]) if b else None
         self.baseline = b
+        # k_sigma is the whole calibration now; the old ref_lo/ref_hi are kept
+        # for provenance but no longer decide anything.
+        if b is not None and b["k_sigma"]:
+            self.k_sigma = float(b["k_sigma"])
 
     @property
     def scoring(self) -> bool:
         """a verdict needs both: a person to attribute it to, and their calm.
         without a subject we would be judging someone against nobody; without a
         baseline, against someone else's body."""
-        return self.subject is not None and self.thresholds is not None
+        return self.subject is not None and self.baseline is not None
 
     async def send_sens(self, sens: float):
         """move the board's slider, and ours with it."""
@@ -301,13 +473,32 @@ class Device:
                               n_windows=r["n"], fs=int(FS), win_len=int(WIN),
                               session_id=sess,
                               model_id=getattr(self.det, "model_id", None),
-                              source="device")
+                              source="device", k_sigma=r["k_sigma"])
         self.recent.clear()
         self.refresh()
-        # where "balanced" reproduces the calibrated p90, so the default operating
-        # point right after calibrating is exactly 90% specificity.
-        lvl = (r["threshold"] - r["ref_lo"]) / (r["ref_hi"] - r["ref_lo"] + 1e-9)
-        return float(np.clip((0.62 - lvl) / 0.40, 0.0, 1.0))
+        # park the slider where this person's measured operating point sits, so
+        # the control opens on the calibrated answer and can be moved from there.
+        return level_to_sens(r["k_sigma"] / Z_FULL)
+
+    def threshold_z(self) -> float:
+        """where the flag sits, in sigmas above this wearer's live calm.
+
+        Purely the slider now -- the bar position times the bar's full scale.
+        No score involved: this used to be computed inside apply(), which only
+        runs with a finger on the sensor AND a full window AND enough history,
+        so the slider moved and the line stayed at its default until all three
+        were true.
+
+        The calibrated k_sigma no longer sets this. It sets where the slider
+        STARTS after a calibration (see commit_calibration), which is the honest
+        division: the measurement suggests an operating point, the operator
+        chooses one, and the control reads the same as the chart.
+        """
+        return sens_to_level(self.sens) * Z_FULL
+
+    def refresh_threshold(self):
+        """recompute the drawn line. cheap, and safe to call every tick."""
+        self.thr_level = float(np.clip(sens_to_level(self.sens), 0.0, 1.0))
 
     def score_window(self):
         """assess the window, then score what survives.
@@ -332,20 +523,47 @@ class Device:
         if raw is None:              # window refused; hold, do not guess
             return
         self.recent.append(float(raw))
-        self.ema = raw if self.ema is None else 0.65 * self.ema + 0.35 * raw
+        self.ema = raw if self.ema is None else \
+            (1.0 - EMA_ALPHA) * self.ema + EMA_ALPHA * raw
         self.score = self.ema
         if not self.scoring:
             self.level, self.flag = None, False
             return
-        _, lo, hi = self.thresholds
-        self.level = float(np.clip((self.ema - lo) / (hi - lo + 1e-9), 0.0, 1.0))
-        # the SLIDER decides the threshold, not the stored p90. calibration sets
-        # the slider's default so that "balanced" lands on the p90 of this
-        # person's calm; moving it shifts the bar from there.
-        self.thr_level = sens_to_level(self.sens)
-        was = self.flag
-        self.flag = bool(self.level >= self.thr_level)
+        # the scale comes from the LAST FEW MINUTES, not from the calibration day
+        r = np.fromiter(self.recent, dtype=np.float64, count=len(self.recent))
+        if len(r) < NORM_MIN:
+            self.level, self.flag = None, False
+            return
+        self.centre = float(np.percentile(r, NORM_Q))
+        mad = float(np.median(np.abs(r - np.median(r))) * 1.4826)
+        self.spread = float(max(mad, SPREAD_FLOOR * abs(self.centre), 1e-6))
+        z = (self.ema - self.centre) / self.spread
 
+        # the slider scales the calibrated k rather than replacing it: mid-travel
+        # is exactly this person's calibrated operating point. the line the UI
+        # draws has to BE the line it flags at, so both come from threshold_z().
+        k = self.threshold_z()
+        self.refresh_threshold()
+        self.level = float(np.clip(z / Z_FULL, 0.0, 1.0))
+        was = self.flag
+
+        # hysteresis: crossing the line is not the same as being past it. the
+        # score has to STAY over for FLAG_ON_S before this counts as a flag, and
+        # stay under for FLAG_OFF_S before it clears. without it every brief
+        # excursion became an event, which is most of what the history filled up
+        # with.
+        if z >= k:
+            self.above += 1
+            self.below = 0
+        else:
+            self.below += 1
+            self.above = 0
+        if not self.flag and self.above >= FLAG_ON_S:
+            self.flag = True
+        elif self.flag and self.below >= FLAG_OFF_S:
+            self.flag = False
+
+        self.flag_hist.append(1 if self.flag else 0)
         if self.session_id is None:
             return
         self.db.add_reading(self.session_id, score=self.score, level=self.level,
@@ -394,25 +612,21 @@ class Device:
         return name or self.subject["code"]
 
     def baseline_fit(self):
-        """does the stored baseline still describe the finger in front of it?
+        """is the operating point sane, judged on what it is actually doing?
 
-        Measured on this rig: WITHIN a session the score is stable to about 1%
-        (three clean captures scored 0.2642/0.2653/0.2674), but BETWEEN sessions
-        the calibrated calm median moved +48% and then +22% -- each shift larger
-        than the whole 0-100% band is wide. So a baseline is remembered
-        perfectly and still stops describing today's finger, and the flags that
-        follow look random.
+        This used to compare today's score against the calibration day's
+        ref_lo. Under the self-referencing scale nothing reads ref_lo any more,
+        so that warning fired on a system that was working fine.
 
-        This compares the median of recent scores against the calm median the
-        baseline was built from. Near 0 means the baseline fits; far from it
-        means recalibrate, and saying so is better than flagging nonsense.
+        What is worth saying is how much of the time it flags. Calibration aims
+        for 10%; a great deal more than that means k is too low for this person
+        and the honest fix is to recalibrate, not to squint at the banner.
         """
-        if not self.scoring or len(self.recent) < 30:
+        if not self.scoring or len(self.flag_hist) < 60:
             return None
-        _, lo, hi = self.thresholds
-        off = (float(np.median(self.recent)) - lo) / (hi - lo + 1e-9)
-        return {"offset": round(float(off), 3), "n": len(self.recent),
-                "stale": bool(abs(off) > 0.35)}
+        rate = float(np.mean(self.flag_hist))
+        return {"flag_rate": round(rate, 3), "n": len(self.flag_hist),
+                "stale": bool(rate > 0.30)}
 
     def status(self) -> dict:
         stale = time.monotonic() - self.last_seen if self.last_seen else None
@@ -428,6 +642,10 @@ class Device:
             "score": round(self.score, 5),
             "quality": None if self.quality is None else round(self.quality, 3),
             "quality_note": self.quality_note,
+            "k_sigma": round(self.k_sigma, 2),
+            "centre": None if self.centre is None else round(self.centre, 5),
+            "spread": None if self.spread is None else round(self.spread, 5),
+            "norm_n": len(self.recent),
             "state": self.state,
             "baseline_fit": self.baseline_fit(),
             "scoring": self.scoring,
@@ -451,7 +669,13 @@ class CalibSession:
     """collect this user's calm and derive their thresholds. master-side, because
     the model lives here -- a board can stream but cannot score its own windows."""
 
-    TARGET = 20                    # windows needed before commit is allowed
+    # Sampled once a SECOND, like the runtime, and for long enough to see the
+    # same distribution. At one window every 5 s the calibration measured a
+    # different quantity from the one the flag is decided on, and the k it
+    # derived flagged 41% of a calm session instead of 10%.
+    TARGET = 180                   # 3 minutes. 2 was not enough to see the tail:
+                                   # p90 of z over 120 samples came out at 1.5
+                                   # while the same person's full session was 5.0
 
     def __init__(self):
         self.scores: list = []
@@ -466,7 +690,7 @@ class CalibSession:
         now = time.monotonic()
         if now < self.next_at:
             return
-        self.next_at = now + 5.0
+        self.next_at = now + 1.0
         sc, _, _ = dev.score_window()
         if sc is not None:          # a baseline learned from knocks is not calm
             self.scores.append(sc)
@@ -482,8 +706,38 @@ class CalibSession:
         lo = float(np.median(sc))
         hi = float(np.quantile(sc, 0.99))
         span = max(hi - lo, 0.40 * lo)     # a hair-thin band makes the gauge useless
+        # k_sigma: the z this person's own calm actually reaches, measured by
+        # replaying the exact runtime pipeline -- EMA, then the rolling centre
+        # and spread -- over the calibration scores. Deriving it from the raw
+        # window scores instead compared two different distributions: the EMA
+        # shrinks the spread, so the live z ran ~4x larger than calibration
+        # expected and the flag fired 41% of the time on calm.
+        ema, hist, z = None, [], []
+        for x in sc:
+            ema = x if ema is None else (1.0 - EMA_ALPHA) * ema + EMA_ALPHA * x
+            hist.append(ema)
+            h = np.asarray(hist[-NORM_N:], dtype=np.float64)
+            if len(h) < NORM_MIN:
+                continue
+            c = float(np.percentile(h, NORM_Q))
+            sp = max(float(np.median(np.abs(h - np.median(h))) * 1.4826),
+                     SPREAD_FLOOR * abs(c), 1e-6)
+            z.append((ema - c) / sp)
+        # p90 of that is the 90%-specificity operating point this person asked
+        # for; clamped so a degenerate calibration cannot make it absurd.
+        # Floored at 3.0 rather than trusting a short sample outright: a
+        # calibration that happens to sit in a very flat stretch produces a tiny
+        # p90 and would flag a third of the day. Measured over one real calm
+        # session: k=1.33 flags 33%, k=3.0 flags 15%, k=4.0 flags 12%, k=5.0
+        # flags 6%, and the honest p90 was 4.41 (10%). A three-minute sample
+        # under-reads the tail, so the floor does the work.
+        if len(z) < 100:
+            k = K_DEFAULT
+        else:
+            k = max(float(np.percentile(z, 90)), 4.0)
         return {"threshold": float(np.quantile(sc, 0.90)),
-                "ref_lo": lo, "ref_hi": lo + span, "n": len(sc)}
+                "ref_lo": lo, "ref_hi": lo + span, "n": len(sc),
+                "k_sigma": float(min(k, 12.0))}
 
 
 # ------------------------------------------------------------------ the fleet
@@ -558,6 +812,15 @@ class Fleet:
                             m = json.loads(raw)
                         except Exception:
                             continue
+                        # the board re-broadcasts calibration commands from its
+                        # own dashboard; we are one of its websocket clients, so
+                        # this is how that button reaches the model.
+                        cmd = m.get("cmd") or ""
+                        if cmd.startswith("calib_"):
+                            err = await run_calib(dev, cmd[len("calib_"):])
+                            if err:
+                                print(f"  {dev.id}: calib {cmd} -> {err}", flush=True)
+                            continue
                         if m.get("type") != "f":
                             continue
                         dev.last_seen = time.monotonic()
@@ -576,7 +839,13 @@ class Fleet:
                             for v in (m.get("bvp") or []):
                                 dev.buf.append(float(v))
                             if dev.calib:
+                                before = len(dev.calib.scores)
                                 dev.calib.offer(dev)
+                                if len(dev.calib.scores) != before:
+                                    st = dev.calib.status()
+                                    await asyncio.get_running_loop().run_in_executor(
+                                        NET, push_calib, dev.ip, "record",
+                                        st["windows"], st["target"], st["can_commit"])
                         else:
                             # a momentary lift should not cost a whole minute of
                             # refilling. hold the buffer briefly; only a real
@@ -597,6 +866,12 @@ class Fleet:
                         if now < next_score:
                             continue
                         next_score = now + 1.0
+
+                        # The line the slider sets is knowable even with no
+                        # finger on the sensor, so recompute it before deciding
+                        # what to say -- otherwise it sits at its default until
+                        # scoring starts and the slider looks dead.
+                        dev.refresh_threshold()
 
                         # Say something EVERY second, even when the answer is
                         # "not yet". Silence read as calm on the board.
@@ -641,6 +916,49 @@ class Fleet:
             await self.discover()
 
 
+async def run_calib(dev, action: str):
+    """start / cancel / commit a calibration. returns an error string or None.
+
+    The roster's button and the board dashboard's button both land here, so the
+    two cannot drift apart -- the dashboard's used to reach nothing at all.
+    """
+    if action == "start":
+        # a baseline has to belong to somebody, or it is just a number.
+        if dev.subject is None:
+            return "assign a subject to this board first"
+        dev.calib = CalibSession()
+        await asyncio.get_running_loop().run_in_executor(
+            NET, push_calib, dev.ip, "record", 0, CalibSession.TARGET, False)
+        print(f"  {dev.id}: calibrating {dev.subject['code']}", flush=True)
+        return None
+
+    if action == "cancel":
+        dev.calib = None
+        await asyncio.get_running_loop().run_in_executor(
+            NET, push_calib, dev.ip, "cancelled", 0, CalibSession.TARGET, False)
+        return None
+
+    if action == "commit":
+        if not dev.calib or len(dev.calib.scores) < CalibSession.TARGET:
+            return "not enough clean windows yet"
+        if dev.subject is None:
+            return "no subject on this board"
+        r = dev.calib.result()
+        n = r["n"]
+        sens = dev.commit_calibration(r)
+        pushed = await dev.send_sens(sens)
+        dev.calib.done = True
+        dev.calib = None
+        await asyncio.get_running_loop().run_in_executor(
+            NET, push_calib, dev.ip, "done", n, CalibSession.TARGET, True)
+        print(f"  {dev.id}: {dev.subject['code']} calibrated on {n} windows, "
+              f"k_sigma {r['k_sigma']:.2f}, slider -> {dev.sens:.2f}"
+              f"{'' if pushed else ' (board did not take it)'}", flush=True)
+        return None
+
+    return "unknown action"
+
+
 # ----------------------------------------------------------------- the server
 
 def build_app(fleet: Fleet):
@@ -666,6 +984,18 @@ def build_app(fleet: Fleet):
             "devices": [d.status() for d in
                         sorted(fleet.devices.values(), key=lambda x: x.id)],
         })
+
+    @app.get("/api/tuning")
+    async def get_tuning():
+        return JSONResponse({"tuning": tuning_state()})
+
+    @app.post("/api/tuning")
+    async def set_tuning(body: dict = Body(default={})):
+        changed = tuning_apply(body, db=fleet.db)
+        if changed:
+            print("  tuning: " + ", ".join("%s=%s" % kv for kv in changed.items()),
+                  flush=True)
+        return {"ok": True, "changed": changed, "tuning": tuning_state()}
 
     @app.post("/api/rescan")
     async def rescan():
@@ -777,37 +1107,27 @@ def build_app(fleet: Fleet):
     async def device_events(dev_id: str, limit: int = 50):
         return JSONResponse({"events": fleet.db.events_for_device(dev_id, limit)})
 
+    @app.delete("/api/devices/{dev_id}/events")
+    async def clear_device_events(dev_id: str):
+        n = fleet.db.clear_events(device_id=dev_id)
+        dev = fleet.devices.get(dev_id)
+        if dev is not None:
+            # an episode in progress now points at a row that is gone; bumping
+            # it would write into nothing. dropping the pointer means the next
+            # rising edge opens a fresh event instead of silently losing it.
+            dev.event_id = None
+        print(f"  {dev_id}: flag history cleared ({n} events)", flush=True)
+        return {"ok": True, "cleared": n}
+
     @app.post("/api/calib/{dev_id}/{action}")
     async def calib(dev_id: str, action: str):
         dev = fleet.devices.get(dev_id)
         if dev is None:
             return JSONResponse({"error": "unknown device"}, status_code=404)
-        if action == "start":
-            # a baseline has to belong to somebody, or it is just a number.
-            if dev.subject is None:
-                return JSONResponse({"error": "assign a subject to this board first"},
-                                    status_code=400)
-            dev.calib = CalibSession()
-            return {"ok": True}
-        if action == "cancel":
-            dev.calib = None
-            return {"ok": True}
-        if action == "commit":
-            if not dev.calib or len(dev.calib.scores) < CalibSession.TARGET:
-                return JSONResponse({"error": "not enough clean windows yet"},
-                                    status_code=400)
-            if dev.subject is None:
-                return JSONResponse({"error": "no subject on this board"}, status_code=400)
-            r = dev.calib.result()
-            sens = dev.commit_calibration(r)
-            pushed = await dev.send_sens(sens)
-            dev.calib.done = True
-            dev.calib = None
-            print(f"  {dev_id}: {dev.subject['code']} calibrated on {r['n']} windows, "
-                  f"threshold {r['threshold']:.5f}, slider -> {dev.sens:.2f}"
-                  f"{'' if pushed else ' (board did not take it)'}", flush=True)
-            return {"ok": True, "sens": dev.sens, **r}
-        return JSONResponse({"error": "unknown action"}, status_code=400)
+        err = await run_calib(dev, action)
+        if err:
+            return JSONResponse({"error": err}, status_code=400)
+        return {"ok": True, "sens": dev.sens}
 
     return app
 
@@ -837,6 +1157,10 @@ async def amain(args) -> int:
     print(f"  store {db.path}", flush=True)
     for name, code, dev in import_legacy_scorers(db, verbose=False):
         print(f"  imported {name} -> subject {code} on {dev}", flush=True)
+    restored = tuning_restore(db)
+    if restored:
+        print("  tuning restored: " + ", ".join("%s=%s" % kv for kv in restored.items()),
+              flush=True)
     stale = db.close_stale_sessions()
     if stale:
         print(f"  closed {stale} session(s) left open by a previous run", flush=True)

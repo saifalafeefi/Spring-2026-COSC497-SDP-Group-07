@@ -668,7 +668,12 @@ class Component extends DCLogic {
     // "no verdict yet".
     const mstate = c.state || null;
     const warming = (mstate === 'warm') || (mstate === null && c.buf < c.win);
-    this.smooth += ((c.level||0)-this.smooth)*0.16;
+    // The master already EMA-smooths the level it sends. Smoothing it AGAIN
+    // here put the gauge several seconds behind the flag, so the screen read
+    // 27% under a 42% threshold while the banner said stressed -- the banner
+    // was right and the number was stale. Only the mock replay needs smoothing.
+    if(c.flagProvided) this.smooth = (c.level||0);
+    else this.smooth += ((c.level||0)-this.smooth)*0.16;
     const ql=this.qualityLabel(c.q);
     let flag=this.state.flag;
     if(mstate && mstate !== 'ok'){ flag=false; this.flagSince=null; this.calmSince=null; }
@@ -709,8 +714,11 @@ class Component extends DCLogic {
       status='noVerdict';
     else if(mstate === 'hold' || ql==='poor') status='poorSignal';
     else if(warming) status='warming';
+    // hysteresis holds the flag for a few seconds after the level drops, so the
+    // banner can be red while the number is plainly under the line. say which.
+    else if(flag && this.smooth < this.state.thrLevel) status='clearing';
     else if(flag) status='flagged';
-    else if(this.smooth > this.state.thrLevel*0.66) status='caution';
+    else if(this.smooth > this.state.thrLevel*0.66) status='caution';   // amber
     else status='calm';
     // history sampling
     if(c.elapsed - this.lastHist > 0.5 || this.lastHist===0){ this.lastHist=c.elapsed; this.levelHist.push({t:c.elapsed, level:c.level, hr:c.bpm}); if(this.levelHist.length>800) this.levelHist.shift(); }
@@ -752,7 +760,7 @@ class Component extends DCLogic {
   }
   fallbackMock(msg){ this.ws=null; this.setState({useLive:false, source:'replay', deviceConnected:false, connected:true, running:true, toast:msg+' — using demo replay'}); clearTimeout(this._tT); this._tT=setTimeout(()=>this.setState({toast:null}),3600); }
   onWsMsg(m){
-    if(m.type==='hello'){ const sv=m.sensitivity; const st={ role:m.role||'device', fs:m.fs||64, winS:m.win_s||60, win:(m.fs||64)*(m.win_s||60), thrLevel:m.thr_level??0.42, subject:m.subject||'S5', subjectName:m.subject||this.state.subjectName, running:!!m.running, source:m.source||'device', deviceConnected:m.device_connected!==false }; if(sv!=null){ st.sensitivity=sv; st.preset=sv>=0.64?'Cautious':(sv<=0.37?'Strict':'Balanced'); } this.setState(st); }
+    if(m.type==='hello'){ const sv=m.sensitivity; const st={ role:m.role||'device', fs:m.fs||64, winS:m.win_s||60, win:(m.fs||64)*(m.win_s||60), thrLevel:m.thr_level??0.42, subject:m.subject||'S5', subjectName:m.subject||this.state.subjectName, running:!!m.running, source:m.source||'device', deviceConnected:m.device_connected!==false }; if(sv!=null){ st.sensitivity=sv; st.preset=sv>=0.64?'Strict':(sv<=0.37?'Cautious':'Balanced'); } this.setState(st); }
     else if(m.type==='f'){
       if(Array.isArray(m.bvp)){ for(const v of m.bvp) this.wave.push(v); if(this.wave.length>960) this.wave.splice(0,this.wave.length-960); }
       const q = (m.quality!=null)?m.quality:0.9;
@@ -766,6 +774,11 @@ class Component extends DCLogic {
       // the board's own dashboard should follow, not wait for a reload
       if(m.subject && m.subject !== this.state.subjectName)
         this.setState({subject:m.subject, subjectName:m.subject});
+      // Every frame carries the master's current threshold. Reading it only
+      // from `hello` and the `thr` echo meant the line moved when you reloaded
+      // the page and at no other time.
+      if(m.thr_level!=null && m.thr_level!==this.state.thrLevel)
+        this.setState({thrLevel:m.thr_level});
       if(m.running!=null && m.running!==this.state.running) this.setState({running:m.running});
       if(document.hidden){
         const n=(window.performance&&performance.now)?performance.now():Date.now();
@@ -778,7 +791,7 @@ class Component extends DCLogic {
       if(m.thr_level!=null) patch.thrLevel=m.thr_level;
       if(m.calibrated_on) patch.calibratedOn=m.calibrated_on;
       if(m.sensitivity!=null){ patch.sensitivity=m.sensitivity;
-        patch.preset = m.sensitivity>=0.64?'Cautious':(m.sensitivity<=0.37?'Strict':'Balanced'); }
+        patch.preset = m.sensitivity>=0.64?'Strict':(m.sensitivity<=0.37?'Cautious':'Balanced'); }
       this.setState(patch);
     } else if(m.type==='calib'){
       // real calibration progress from the device, replacing the mock ramp
@@ -811,7 +824,7 @@ class Component extends DCLogic {
     const warming=st.running&&st.warming;
     const lvl=warming?0:Math.max(0,Math.min(1,st.level||0));
     const thr=Math.max(0.001,Math.min(1,st.thrLevel));
-    const ss=st.statusState; const muted=(ss==='warming'||ss==='paused'||ss==='offline'||ss==='poorSignal'||ss==='noContact'||ss==='noVerdict');
+    const ss=st.statusState; const muted=(ss==='warming'||ss==='paused'||ss==='offline'||ss==='poorSignal'||ss==='noContact'||ss==='noVerdict'||ss==='clearing');
     const r2=lvl/thr; const col=muted?'#CBD4DF':(r2>=1?'#F2645A':(r2>=0.66?'#F4B740':'#2DBE9E'));
     ctx.lineCap='round';
     ctx.beginPath(); ctx.arc(cx,cy,r,A0,A1); ctx.strokeStyle='#EAEFF5'; ctx.lineWidth=13; ctx.stroke();
@@ -910,7 +923,16 @@ class Component extends DCLogic {
   start(){ if(this.state.useLive&&this.ws){ try{this.ws.send(JSON.stringify({cmd:'start'}))}catch(e){} } this.setState({running:true, connected:true}); }
   pause(){ if(this.state.useLive&&this.ws){ try{this.ws.send(JSON.stringify({cmd:'pause'}))}catch(e){} } this.setState({running:false}); }
   reset(){ this.simClock=0; this.phase=0; this.smooth=0; this.wave=[]; this.levelHist=[]; this.flagSince=this.calmSince=null; this.curEvent=null; this.lastHist=0; if(this.state.useLive&&this.ws){ try{this.ws.send(JSON.stringify({cmd:'reset'}))}catch(e){} } this.setState({events:[], elapsed:0, buf:0, level:0, flag:false, bpm:null, statusState:this.state.running?'warming':'paused'}); }
-  setSens(v,preset){ const thr=0.62-0.40*v; let p=preset; if(!p){ p = v>=0.64?'Cautious':(v<=0.37?'Strict':'Balanced'); } this.setState({sensitivity:v, preset:p, thrLevel:Math.max(0.12,Math.min(0.85,thr))}); if(this.state.useLive&&this.ws){ try{this.ws.send(JSON.stringify({cmd:'set_sensitivity',value:v}))}catch(e){} } }
+  // The threshold is NOT a function of the slider any more -- it is k_sigma
+  // above the wearer's live calm, and only the master can compute it. Setting
+  // thrLevel here drew a line from the old formula for the second before the
+  // master's real number arrived, so the line jumped on every drag. Move the
+  // slider, tell the master, and let it say where the line goes.
+  setSens(v,preset){
+    let p=preset; if(!p){ p = v>=0.64?'Strict':(v<=0.37?'Cautious':'Balanced'); }
+    this.setState({sensitivity:v, preset:p});
+    if(this.state.useLive&&this.ws){ try{this.ws.send(JSON.stringify({cmd:'set_sensitivity',value:v}))}catch(e){} }
+  }
   openCalib(){ this.calib={progress:0,phase:'prepare',q:0.95}; this.setState({calibOpen:true}); }
   closeCalib(){ this.setState({calibOpen:false}); }
   calibStart(){ this.calib.phase='record'; this.calib.progress=0;
@@ -989,10 +1011,20 @@ class Component extends DCLogic {
         iconPath:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 8v5',aura:'none'},
       warming:{word:'Warming up — '+nLeft+'s left',sub:'filling the first '+st.winS+'s window',color:'#5B8DEF',soft:'#ECF2FE',glow:'rgba(91,141,239,.17)',iconPath:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l3 2',aura:'none'},
       flagged:{word:'Needs review — possible stress',sub:'flagged at '+(st.flagTimeStr||this.fmt(st.elapsed))+' · peaked '+Math.round(st.level*100)+'%',color:'#F2645A',soft:'#FDECEA',glow:'rgba(242,100,90,.24)',iconPath:'M12 4l9 16H3z M12 10v4 M12 17h.01',aura: rm?'none':'aura 2.6s ease-in-out infinite'},
+      clearing:{word:'Settling',sub:'was flagged, now back under the line',
+        color:'#E0982A',soft:'#FEF6E6',glow:'rgba(244,183,64,.20)',
+        iconPath:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M8 12h8',aura:'none'},
       caution:{word:'Slightly elevated',sub:'watching for sustained change…',color:'#E0982A',soft:'#FEF6E6',glow:'rgba(244,183,64,.20)',iconPath:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 8v5 M12 16h.01',aura:'none'},
-      calm:{word:'Calm',sub:'monitoring · '+this.fmtLong(st.elapsed),color:'#2BAE73',soft:'#E9F9F0',glow:'rgba(61,203,127,.15)',iconPath:'M20 6.5L9.5 17 4 11.5',aura:'none'}
+      calm:{word:'Calm',sub:'monitoring · '+this.fmtLong(st.elapsed),color:'#2BAE73',soft:'#E9F9F0',glow:'rgba(61,203,127,.15)',iconPath:'M20 6.5L9.5 17 4 11.5',aura:'none'},
+      // there was no entry for this, so a bare sensor fell through to `calm`
+      // and the panel showed a green tick beside a gauge reading NO FINGER
+      noContact:{word:'No finger on the sensor',sub:'nothing to measure',
+        color:'#7C8898',soft:'#EEF1F5',glow:'rgba(148,163,184,.16)',
+        iconPath:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M8 8l8 8',aura:'none'}
     };
-    return map[ss]||map.calm;
+    // anything unmapped is NOT calm -- calm is a verdict, and the whole point
+    // is never to assert one we do not have.
+    return map[ss] || map.noVerdict;
   }
 
   navStyle(){
@@ -1028,8 +1060,10 @@ class Component extends DCLogic {
     const qMap={good:{label:'Good',color:'#2BAE73',soft:'#E9F9F0'},fair:{label:'Fair',color:'#E0982A',soft:'#FEF6E6'},poor:{label:'Poor',color:'#7C8898',soft:'#EEF1F5'},none:{label:'—',color:'#A6B0BD',soft:'#F2F5F8'}};
     const qc=qMap[ql]||qMap.good;
 
-    const presets={Cautious:0.78,Balanced:0.5,Strict:0.24};
-    const hintMap={Cautious:'Flags more — you may see false alarms. You review every flag.',Balanced:'A balanced middle ground between catches and false alarms.',Strict:'Flags only strong, sustained changes — may miss mild ones.'};
+    // the slider is the threshold now, so Cautious (flags more) is the LOW
+    // end and Strict (flags least) the high one -- it used to run backwards
+    const presets={Cautious:0.15,Balanced:0.5,Strict:0.85};
+    const hintMap={Cautious:'Flags at a low bar — more catches, more false alarms. You review every flag.',Balanced:'A balanced middle ground between catches and false alarms.',Strict:'Flags only strong, sustained changes — may miss mild ones.'};
     const segBg=p=> (st.preset===p?'#fff':'transparent');
     const segShadow=p=> (st.preset===p?'0 1px 3px rgba(16,24,40,.12)':'none');
     const segColor=p=> (st.preset===p?'#1B2430':'#8693A4');
@@ -1094,7 +1128,12 @@ class Component extends DCLogic {
       qChipLabel:qc.label, qChipColor:qc.color, qChipSoft:qc.soft,
       showPoorNudge: poor,
       // sensitivity
-      sens:{ preset:st.preset, value:st.sensitivity, hint:hintMap[st.preset]||hintMap.Balanced,
+      sens:{ preset:st.preset, value:st.sensitivity,
+        // moving this does nothing visible while the master is away: it owns
+        // the threshold now, so say that rather than looking broken
+        hint:(st.statusState==='noVerdict'
+              ? 'The master is not connected — the threshold will not update until it is.'
+              : (hintMap[st.preset]||hintMap.Balanced)),
         onCautious:()=>this.setSens(presets.Cautious,'Cautious'), onBalanced:()=>this.setSens(presets.Balanced,'Balanced'), onStrict:()=>this.setSens(presets.Strict,'Strict'),
         onSlider:(e)=>this.setSens(parseFloat(e.target.value),null),
         cautiousBg:segBg('Cautious'), cautiousShadow:segShadow('Cautious'), cautiousColor:segColor('Cautious'),

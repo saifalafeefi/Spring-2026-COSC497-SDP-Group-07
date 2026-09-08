@@ -397,7 +397,10 @@ class Engine:
         the threshold is global to this engine (one model, all viewers share it).
         """
         v = float(min(1.0, max(0.0, v)))
-        level = min(0.85, max(0.12, 0.62 - 0.40 * v))     # match Pulse Watch setSens()
+        # the slider IS the threshold: 0 -> 10% of the bar, 1.0 -> 90%.
+        # same map as anomaly.fleet.sens_to_level, and this server serves
+        # Pulse Watch at /watch, so the two must not disagree.
+        level = 0.10 + 0.80 * v
         self.sensitivity = v
         self.det.threshold = self.det.score_for_level(level)
         if self.score_ema is not None:                    # instant feedback on the live score

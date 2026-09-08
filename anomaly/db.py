@@ -35,7 +35,7 @@ import time
 DEFAULT_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "pulse.db")
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 KINDS = ("calibration", "monitor", "protocol")
 PHASES = ("baseline", "induction", "recovery")
@@ -101,6 +101,12 @@ CREATE TABLE baseline (
   fs            INTEGER,
   win_len       INTEGER,
   source        TEXT,                          -- 'device' | 'wesad' | 'import'
+  -- The one number that survives a re-wear: how many robust sigmas above this
+  -- person's OWN live calm their flag sits. ref_lo/ref_hi record where calm sat
+  -- on the calibration day, and that moves the moment the sensor is re-placed
+  -- (median 1.60 sigmas, p90 10.60, measured on 27 subjects at two placements).
+  -- k_sigma does not move, so one calibration lasts.
+  k_sigma       REAL,
   created       REAL    NOT NULL,
   active        INTEGER NOT NULL DEFAULT 1
 );
@@ -224,6 +230,9 @@ class Db:
                 self.con.execute("ALTER TABLE event ADD COLUMN verdict TEXT")
                 self.con.execute("ALTER TABLE event ADD COLUMN window_path TEXT")
                 v = 5
+            if v == 5:
+                self.con.execute("ALTER TABLE baseline ADD COLUMN k_sigma REAL")
+                v = 6
             self.con.execute("PRAGMA user_version=%d" % v)
             self.con.commit()
 
@@ -416,17 +425,18 @@ class Db:
     def save_baseline(self, subject_id: int, threshold: float, ref_lo: float, ref_hi: float,
                       n_windows: int = 0, fs: int = 64, win_len: int = 3840,
                       session_id=None, model_id=None, source: str = "device",
-                      created=None) -> int:
+                      created=None, k_sigma=None) -> int:
         """a new baseline retires the old one; the old row stays for reproducibility."""
         with self.lock:
             self.con.execute("UPDATE baseline SET active=0 WHERE subject_id=? AND active=1",
                              (subject_id,))
             cur = self.con.execute(
                 """INSERT INTO baseline (subject_id, session_id, model_id, threshold, ref_lo,
-                                         ref_hi, n_windows, fs, win_len, source, created, active)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,1)""",
+                                         ref_hi, n_windows, fs, win_len, source, created,
+                                         active, k_sigma)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,1,?)""",
                 (subject_id, session_id, model_id, threshold, ref_lo, ref_hi,
-                 n_windows, fs, win_len, source, created or time.time()))
+                 n_windows, fs, win_len, source, created or time.time(), k_sigma))
             self.con.commit()
             return cur.lastrowid
 
@@ -471,6 +481,25 @@ class Db:
 
     def set_event_window(self, event_id: int, path: str):
         self._w("UPDATE event SET window_path=? WHERE id=?", (path, event_id))
+
+    def clear_events(self, device_id: str = None, subject_id: int = None) -> int:
+        """forget the flag history for one board or one person; returns the count.
+
+        The saved waveforms under flags/ are deliberately left on disk. Clearing
+        a list in the roster should not quietly destroy the only record of what
+        those flags actually looked like -- that is the evidence a verdict was
+        given on, and it is what makes a bad flag diagnosable weeks later.
+        """
+        if (device_id is None) == (subject_id is None):
+            raise ValueError("clear_events takes exactly one of device_id, subject_id")
+        col, val = (("device_id", device_id) if device_id is not None
+                    else ("subject_id", subject_id))
+        with self.lock:
+            cur = self.con.execute(
+                "DELETE FROM event WHERE session_id IN "
+                "(SELECT id FROM session WHERE %s=?)" % col, (val,))
+            self.con.commit()
+            return cur.rowcount
 
     def verdict_tally(self, subject_id=None) -> dict:
         """how the reviewed flags came out -- the number that says whether this

@@ -22,6 +22,7 @@
 #include <Adafruit_ILI9341.h>
 
 #include <WiFi.h>
+#include <esp_mac.h>      // esp_read_mac: the MAC without the driver
 #include <Preferences.h>
 
 // Copy secrets.example.h to secrets.h and fill it in. It is gitignored, so
@@ -203,17 +204,13 @@ String devId = "pulse-unknown";
 // it stuck there for good.
 float hostSens = 0.5f;          // 0..1 from the slider
 
-// slider -> where the flag threshold sits on the 0..1 level scale. MUST stay
-// identical to sens_to_level() in anomaly/fleet.py, Engine.set_sensitivity in
-// anomaly/serve.py and sensLevel() in both dashboards -- the master decides the
-// flag with that map, so a board drawing a different line would be drawing a
-// line the model does not flag at.
-static inline float sensToLevel(float s) {
-  float lvl = 0.62f - 0.40f * s;
-  return lvl < 0.12f ? 0.12f : (lvl > 0.85f ? 0.85f : lvl);
-}
-
-float hostThrLevel = 0.42f;     // == sensToLevel(0.5f), kept in step with hostSens
+// Where the flag threshold sits on the 0..1 level scale. The board no longer
+// derives this. It once was a pure function of the slider, but the threshold is
+// now k_sigma above the wearer's own live calm and only the master knows
+// k_sigma -- so the master pushes the real number with every verdict and the
+// board just draws what it is told. Guessing here drew 52% while the master
+// flagged at 28%.
+float hostThrLevel = 0.42f;     // until the master's first push arrives
 String wifiSsid;
 String wifiPass;
 bool wifiWanted = false;         // credentials exist, so keep trying
@@ -521,11 +518,22 @@ void drawStatus() {
   bool fresh = (hostFlag >= 0 && (millis() - hostFlagMs) < HOST_BPM_TTL);
   bool finger = (irDcDisplay > 50000);
   // -1 no finger, -2 master silent, -3 warming, -4 holding, -5 nobody assigned
+  // -6 is "elevated": above two thirds of the way to the line but not over it.
+  // Going straight from CALM to STRESSED made a near-miss look identical to a
+  // real crossing, on the panel as well as in the browser.
+  bool elevated = (hostFlag == 0 && hostThrLevel > 0.0f &&
+                   hostLevel > 66.0f * hostThrLevel);
+  // the master holds a flag for a few seconds after the level drops back, so
+  // STRESSED here would contradict the number beside it
+  bool settling = (hostFlag == 1 && hostThrLevel > 0.0f &&
+                   hostLevel < 100.0f * hostThrLevel);
   int32_t state = (!finger) ? -1
                 : (!fresh) ? -2
                 : (strcmp(hostState, "warm") == 0) ? -3
                 : (strcmp(hostState, "hold") == 0) ? -4
                 : (strcmp(hostState, "none") == 0) ? -5
+                : elevated ? -6
+                : settling ? -7
                 : hostFlag;
 
   // the warm-up counts down, so it has to repaint even when the state is the same
@@ -548,6 +556,12 @@ void drawStatus() {
   } else if (state == -1) {
     bg = ILI9341_BLACK;  fg = ILI9341_DARKGREY;
     word = "--";         sub = "no finger on the sensor";
+  } else if (state == -6) {
+    bg = ILI9341_ORANGE; fg = ILI9341_BLACK;
+    word = "ELEVATED";   sub = "above your calm, not flagged yet";
+  } else if (state == -7) {
+    bg = ILI9341_ORANGE; fg = ILI9341_BLACK;
+    word = "SETTLING";   sub = "was flagged, back under the line";
   } else if (state == -3) {
     // the model needs a full 60 s window before it can say anything at all,
     // and showing CALM meanwhile was the wrong answer, not a missing one
@@ -949,14 +963,31 @@ void webBegin() {
       hostSubject[sizeof(hostSubject) - 1] = 0;
     }
     hostWait = req->hasParam("w") ? req->getParam("w")->value().toInt() : 0;
-    // the master's own copy of the same sensToLevel() map. It should already
-    // match what the slider set; accepted so the master stays the authority on
-    // the number the flag was actually decided with.
+    // the master is the only authority on where the line sits
     if (req->hasParam("t")) {         // where the master's threshold sits, 0-100
       int t = req->getParam("t")->value().toInt();
       hostThrLevel = constrain(t, 0, 100) / 100.0f;
     }
     hostFlagMs = millis();
+    req->send(200, "text/plain", "ok");
+  });
+
+  // Calibration progress, pushed by the master while a session runs. The board
+  // does not calibrate anything -- it cannot score its own windows -- it just
+  // forwards the master's progress to whichever dashboards are open.
+  //   /calib?p=<phase>&w=<windows>&t=<target>&c=<0|1>
+  server.on("/calib", HTTP_GET, [](AsyncWebServerRequest *req) {
+    const char *phase = req->hasParam("p") ? req->getParam("p")->value().c_str() : "record";
+    int w = req->hasParam("w") ? req->getParam("w")->value().toInt() : 0;
+    int t = req->hasParam("t") ? req->getParam("t")->value().toInt() : 1;
+    int c = req->hasParam("c") ? req->getParam("c")->value().toInt() : 0;
+    if (t < 1) t = 1;
+    char msg[224];
+    snprintf(msg, sizeof(msg),
+             "{\"type\":\"calib\",\"phase\":\"%s\",\"windows\":%d,"
+             "\"min_windows\":%d,\"progress\":%.3f,\"can_commit\":%s}",
+             phase, w, t, (float)w / (float)t, c ? "true" : "false");
+    ws.textAll(msg);
     req->send(200, "text/plain", "ok");
   });
 
@@ -992,14 +1023,26 @@ void webBegin() {
       size_t n = len < sizeof(buf) - 1 ? len : sizeof(buf) - 1;
       memcpy(buf, data, n);
       buf[n] = 0;
+      // The master is a websocket CLIENT of this board, so anything broadcast
+      // here reaches it. That is the whole transport for calibration: the
+      // dashboard's Calibrate button used to send calib_start into a handler
+      // that only knew set_sensitivity, and the command was dropped on the
+      // floor while the modal sat at 0% waiting for a reply that never came.
+      if (strstr(buf, "calib_") != NULL) {
+        srv->textAll(buf);
+        return;
+      }
       if (strstr(buf, "set_sensitivity") != NULL) {
         const char *v = strstr(buf, "\"value\"");
         if (v != NULL && (v = strchr(v, ':')) != NULL) {
           float sv = atof(v + 1);
           if (sv >= 0.0f && sv <= 1.0f) {
             hostSens = sv;
-            hostThrLevel = sensToLevel(hostSens);   // answer with the NEW line,
-                                                    // not the master's last one
+            // The board used to derive the line itself, back when it was a pure
+            // function of the slider. It is not any more: the threshold is
+            // k_sigma above the wearer's live calm, and only the master knows
+            // k_sigma. Guessing here drew 52% while the master flagged at 28%.
+            // The master pushes the real number every second via /flag?t=.
             char thr[128];
             snprintf(thr, sizeof(thr),
                      "{\"type\":\"thr\",\"sensitivity\":%.3f,\"thr_level\":%.3f,\"threshold\":0}",
@@ -1106,7 +1149,7 @@ void wsTick() {
     snprintf(levelStr, sizeof(levelStr), "null");
   }
 
-  // idx caps at ~208 chars and bvp at ~448, plus ~290 of scaffolding once
+  // idx caps at ~208 chars and bvp at ~448, plus ~290 of scaffolding oncesl
   // state and warm_s are in it. 1024 left barely 70 bytes of headroom and a
   // truncated frame is invalid JSON the dashboard silently drops.
   char frame[1280];
@@ -1164,11 +1207,18 @@ void wifiConnect() {
   }
   WiFi.mode(WIFI_STA);
   {
-    uint8_t m[6];
-    WiFi.macAddress(m);
+    // WiFi.macAddress() reads the WiFi DRIVER, which is not up yet -- begin() is
+    // three lines below -- so it returned 00:00:00 and every board called itself
+    // "pulse-000000". Harmless with one board; with two they collide in the
+    // roster and the store, since the id is what everything keys on.
+    // esp_read_mac() reads the eFuse, which is valid from power-on.
+    uint8_t m[6] = {0};
+    esp_read_mac(m, ESP_MAC_WIFI_STA);
     char b[24];
     snprintf(b, sizeof(b), "pulse-%02x%02x%02x", m[3], m[4], m[5]);
     devId = String(b);
+    Serial.print("# device id ");
+    Serial.println(devId);
   }
   WiFi.setSleep(false);            // sleep adds latency to the websocket
   // Full transmit power is what makes the 3.3 V rail sag hard enough to take the
