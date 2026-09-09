@@ -179,7 +179,7 @@ char hostSubject[28] = "";
 int32_t hostWait = 0;                 // seconds of warm-up left
 int32_t shownWait = -1;               // last warm-up number painted
 int32_t shownFlag = -2;               // what is currently painted, to avoid redraws
-bool shownDemo = false;               // was the DEMO badge painted?
+int8_t shownBadge = -1;               // which corner badge is painted, if any
 uint32_t irDcDisplay = 0;             // slow IR average, for the no-finger check
 // Big enough for "W,<ssid>,<password>": an SSID is up to 32 chars and a WPA2
 // passphrase up to 63, so the old 16-byte buffer could never carry credentials.
@@ -546,6 +546,12 @@ void drawStatus() {
   // gates would answer "--" forever. Skip them, and say DEMO on the panel.
   bool demo = (hostDemo != 0 && (millis() - hostDemoMs) < DEMO_TTL);
   if (!demo) hostDemo = 0;
+  // the master is scoring, but with no calibration behind it -- the model
+  // against a stranger. a real verdict, and not the same claim as a calibrated
+  // one, so it is shown and labelled rather than hidden.
+  bool zeroShot = (strcmp(hostState, "zero") == 0);
+  const char *badge = demo ? "DEMO" : (zeroShot ? "ZERO-SHOT" : NULL);
+  int8_t badgeId = demo ? 1 : (zeroShot ? 2 : 0);
   int32_t state = demo
                 ? ((strcmp(hostState, "warm") == 0) ? -3
                    : elevated ? -6
@@ -561,13 +567,13 @@ void drawStatus() {
                 : hostFlag;
 
   // the warm-up counts down, so it has to repaint even when the state is the same
-  if (state == shownFlag && demo == shownDemo &&
+  if (state == shownFlag && badgeId == shownBadge &&
       !(state == -3 && hostWait != shownWait)) {
     return;                    // nothing changed, leave the panel alone
   }
   shownFlag = state;
   shownWait = hostWait;
-  shownDemo = demo;
+  shownBadge = badgeId;
 
   uint16_t bg, fg;
   const char *word;
@@ -620,11 +626,12 @@ void drawStatus() {
 
   // Nobody should be able to mistake a recording for a measurement, least of
   // all on the device's own screen.
-  if (demo) {
+  if (badge != NULL) {
     tft.setTextSize(1);
     tft.setTextColor(fg);
-    tft.setCursor(GRAPH_X + GRAPH_WIDTH - 32, GRAPH_Y + 6);
-    tft.print("DEMO");
+    tft.setCursor(GRAPH_X + GRAPH_WIDTH - 6 - (int16_t)strlen(badge) * 6,
+                  GRAPH_Y + 6);
+    tft.print(badge);
   }
 
   if (state == 0 || state == 1) {                // deviation bar

@@ -126,7 +126,7 @@
 const $ = i => document.getElementById(i);
 let devices = [], subjects = [], events = {};
 // the API this page was written against; the master reports its own in /api/devices
-const NEEDS_API = 11;
+const NEEDS_API = 12;
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -217,8 +217,7 @@ function updateCard(d){
                                why='no stream from this board'; }
   else if(!d.subject){         verdict='—';       cls='none';
                                why='nobody assigned — the flag has no one to be about'; }
-  else if(!d.baseline){        verdict='—';       cls='none';
-                               why=d.subject.code+' has no baseline yet'; }
+
   else if(!d.contact){         verdict='—';       cls='none';
                                why='no finger on the sensor'; }
   else if(d.state==='warm'){   verdict='WARMING';  cls='none';
@@ -244,6 +243,10 @@ function updateCard(d){
   setText(c.verdict, verdict);
   if(c.verdict.className !== 'verdict js-verdict ' + cls)
     c.verdict.className = 'verdict js-verdict ' + cls;
+  // an uncalibrated verdict is a real verdict -- the model against a stranger --
+  // but it is not the same claim as a calibrated one, so it never goes unlabelled
+  if(d.calibrated === false && d.subject && d.state === 'zero')
+    why = 'ZERO-SHOT · ' + why + ' · no calibration yet';
   setText(c.why, why);
   // a refused window is not a calm one: say which it is, rather than leaving a
   // stale level on screen as though it were current
@@ -285,7 +288,8 @@ function updateCard(d){
   const b = d.baseline;
   setText(c.base, b
     ? 'baseline '+b.threshold+' from '+b.n_windows+' calm windows · '+ago(b.created)
-    : (d.subject ? 'no baseline — calibrate to enable the flag' : ''));
+    : (d.subject ? 'no baseline — flagging zero-shot at k=' + (d.k_sigma ?? '—')
+                   + ' · calibrate to use ' + d.subject.code + "'s own calm" : ''));
 
   const cal = d.calib;
   setHTML(c.actions, cal

@@ -847,7 +847,11 @@ class Component extends DCLogic {
     else this.smooth += ((c.level||0)-this.smooth)*0.16;
     const ql=this.qualityLabel(c.q);
     let flag=this.state.flag;
-    if(mstate && mstate !== 'ok'){ flag=false; this.flagSince=null; this.calmSince=null; }
+    // 'zero' is a scoring state like 'ok' -- the master is flagging, just
+    // without a calibration behind it. treating it as a non-scoring state here
+    // suppressed every zero-shot flag before it reached the screen.
+    const scoring = (mstate === 'ok' || mstate === 'zero');
+    if(mstate && !scoring){ flag=false; this.flagSince=null; this.calmSince=null; }
     else if(c.flagProvided){ flag=!!c.flag; }
     else if(ql==='poor' || warming){ flag=false; this.flagSince=null; this.calmSince=null; }
     else {

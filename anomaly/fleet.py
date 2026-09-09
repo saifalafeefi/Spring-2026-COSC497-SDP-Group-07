@@ -63,7 +63,7 @@ HTTP_TIMEOUT = 1.0
 # page against its OLD routes -- the page calls an endpoint that does not exist
 # yet and the browser reports a bare "failed". Bump this whenever a route is
 # added or changed; the page checks it and says plainly that a restart is due.
-API_VERSION = 11
+API_VERSION = 12
 
 # how long a board can go without a finger on it before its session is over.
 # generous on purpose: a session is a stretch of monitoring, and closing one
@@ -408,15 +408,35 @@ class Device:
         self.baseline = b
         # k_sigma is the whole calibration now; the old ref_lo/ref_hi are kept
         # for provenance but no longer decide anything.
-        if b is not None and b["k_sigma"]:
-            self.k_sigma = float(b["k_sigma"])
+        # falls back rather than sticking: moving a board from a calibrated
+        # subject to an uncalibrated one used to leave the previous person's
+        # k_sigma in place, quietly judging the new wearer by someone else's calm.
+        self.k_sigma = (float(b["k_sigma"]) if b is not None and b["k_sigma"]
+                        else K_DEFAULT)
 
     @property
     def scoring(self) -> bool:
-        """a verdict needs both: a person to attribute it to, and their calm.
-        without a subject we would be judging someone against nobody; without a
-        baseline, against someone else's body."""
-        return self.subject is not None and self.baseline is not None
+        """a verdict needs somebody to attribute it to. that is the whole gate.
+
+        It used to need a baseline as well, and that reasoning came from the old
+        design where the flag sat at an absolute score this person had recorded:
+        without their calm you really were judging them against someone else's
+        body. The scale is self-referencing now -- centre and spread are
+        re-estimated live from this wearer's own recent scores -- so the only
+        thing a calibration still supplies is k_sigma, and K_DEFAULT stands in
+        until it exists.
+
+        That makes the uncalibrated case the ZERO-SHOT condition: the model,
+        trained on other people, judging a new wearer with nothing personal
+        behind it. It is worth being able to watch, since the zero-shot vs
+        calibrated delta is exactly what O6 asks us to report. It is marked
+        everywhere it is shown so it cannot be mistaken for a calibrated verdict.
+        """
+        return self.subject is not None
+
+    @property
+    def calibrated(self) -> bool:
+        return self.baseline is not None
 
     async def send_sens(self, sens: float):
         """move the board's slider, and ours with it."""
@@ -649,6 +669,8 @@ class Device:
             "state": self.state,
             "baseline_fit": self.baseline_fit(),
             "scoring": self.scoring,
+            "calibrated": self.calibrated,
+            "k_sigma": round(self.k_sigma, 2),
             "subject": None if sub is None else
                        {"id": sub["id"], "code": sub["code"],
                         "name": sub["display_name"] or sub["code"]},
@@ -884,8 +906,7 @@ class Fleet:
                             dev.quality_note = "no finger on the sensor"
                         elif not dev.scoring:
                             state = "none"
-                            dev.quality_note = ("no subject assigned" if dev.subject is None
-                                                else "no baseline for this subject")
+                            dev.quality_note = "no subject assigned"
                         elif len(dev.buf) < WIN:
                             state = "warm"
                             wait = int(np.ceil((WIN - len(dev.buf)) / float(FS)))
@@ -895,6 +916,10 @@ class Fleet:
                             dev.quality_note = why
                             dev.apply(sc, q)
                             state = "ok" if sc is not None else "hold"
+                            # "zero" reads as a verdict everywhere "ok" does,
+                            # and carries the marker with it.
+                            if state == "ok" and not dev.calibrated:
+                                state = "zero"
 
                         dev.state = state
                         # off the loop: a slow board must not stall the others
