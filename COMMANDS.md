@@ -72,10 +72,56 @@ every `python3 -m ...` below then runs as `~/.venvs/sdp07/bin/python -m ...`
 (macOS/Linux) or `& $PY -m ...` (Windows). note the `&`: PowerShell parses a
 line starting with `$HOME\...` as an expression, not a command.
 
-- **don't `activate`** — spelling out the interpreter avoids shell aliases and a
-  stale `python3`. it is also the single most common reason a command fails with
-  `ModuleNotFoundError: No module named 'tensorflow'` when the install plainly
-  worked: the install went to the venv, the run did not.
+- **prefer not to `activate`** — spelling out the interpreter avoids shell
+  aliases and a stale `python3`. it is also the single most common reason a
+  command fails with `ModuleNotFoundError: No module named 'tensorflow'` when
+  the install plainly worked: the install went to the venv, the run did not.
+- **but if you want to activate, here is how.** it is a normal thing to do and
+  nothing breaks:
+
+  ```bash
+  source ~/.venvs/sdp07/bin/activate     # macOS / Linux
+  python -m anomaly.fleet                # note: `python`, not `python3`
+  deactivate
+  ```
+
+  ```powershell
+  & $HOME\.venvs\sdp07\Scripts\Activate.ps1     # Windows
+  python -m anomaly.fleet
+  deactivate
+  ```
+
+  other Windows shells, if you are not in PowerShell:
+
+  ```
+  cmd.exe     %USERPROFILE%\.venvs\sdp07\Scripts\activate.bat
+  Git Bash    source ~/.venvs/sdp07/Scripts/activate
+  ```
+
+  if PowerShell answers *"running scripts is disabled on this system"*, the
+  execution policy is blocking `Activate.ps1`. this lifts it for that tab only
+  and changes nothing permanently:
+
+  ```powershell
+  Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+  ```
+
+  to confirm activation took, ask which interpreter you actually have — it
+  should be the one under `.venvs/sdp07`:
+
+  ```bash
+  which python                                         # macOS / Linux
+  ```
+
+  ```powershell
+  Get-Command python | Select-Object -ExpandProperty Source    # Windows
+  ```
+
+  one caveat: if your prompt already says `(base)`, conda is active too. both
+  conda and a venv prepend to `PATH`, so a later `conda deactivate` can leave
+  you pointing at the wrong interpreter with no warning. check with
+  `which python` (`Get-Command python` on Windows) if a command starts failing
+  for no reason.
 - **keep the venv outside the repo and outside any synced folder** (iCloud,
   OneDrive, Dropbox). a 1.7 GB venv under an iCloud-synced `~/Documents` made
   `import numpy` take **174 s** instead of 0.2 s. `.gitignore` does not stop a
