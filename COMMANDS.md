@@ -1,24 +1,55 @@
 # command cheat sheet
 
 every command you need, copy-paste ready. run them from the **repo root** unless
-noted otherwise.
+noted, and with the venv interpreter (see setup) rather than a bare `python3`.
 
 ---
 
-## 1. one-time setup
+## what to run, and what to ignore
+
+| command | status | what it is |
+|---|---|---|
+| `anomaly.fleet` | **the demo** | find every board on the LAN, score them all, roster at :8002 |
+| `sketch_aug3a/make_web_assets.py` | **required** | rebuild the board's web pages. after ANY dashboard edit, and on every fresh clone |
+| `anomaly.serve` | current | single-stream dashboard at :8001 — WESAD replay, or one board over USB |
+| `anomaly.db` | current | inspect the store, take a backup |
+| `anomaly.device_wifi` | current | put a board on WiFi over USB, read back its IP |
+| `anomaly.device_check` | current | live grip coach — is the finger on properly? |
+| `anomaly.device_source` | current | sensor self-test, no model and no dashboard in the way |
+| `anomaly.device_calibrate` | current, USB only | re-derive thresholds on your own calm, for `serve --source device` |
+| `anomaly.run` | build step | leave-one-subject-out evaluation (O1/O2) |
+| `anomaly.export` + `anomaly.compress` | build step | train and ship a new model. always both, in that order |
+| `anomaly.make_demo_clip` | build step | rebake the WESAD demo clip into Pulse Watch |
+| `anomaly.calibrate` | build step | per-user calibration on WESAD (the O6 *method*) |
+| `anomaly.make_plots` | build step | regenerate the result figures |
+| `anomaly.master` | **superseded** | one board, headless, no roster and no store. `fleet` does this and more |
+| `pipeline/server.py` | **prior work** | the old cardiac dashboard. do not point a demo at it |
+| `pipeline/run_cli.py` | **prior work** | terminal-only cardiac pipeline |
+| `baselines/train.py`, `quantize.py`, `inference_demo.py` | **prior work** | the supervised 3-class cardiac model, superseded by `anomaly/` |
+
+"build step" means you run it when the model or the data changes, not to demo.
+everything under **prior work** is kept as a reference point and is *not* the
+current direction — see the pivot table in the project brief.
+
+**if you remember nothing else:**
 
 ```bash
-# clone the repo (if you haven't)
+python3 -m anomaly.fleet
+```
+
+---
+
+## 1. setup (once per machine)
+
+```bash
 git clone <repo-url>
 cd Spring-2026-COSC497-SDP-Group-07
 ```
 
-**make a virtualenv first.** the deps are ~1 GB and version-pinned; installing
-them into the system Python fights with everything else on the machine.
-
-**Python 3.12 specifically.** `baselines/requirements.txt` pins
-`tensorflow-cpu<2.20`, and no TF below 2.20 ships wheels for 3.13 or 3.14 —
-on a newer interpreter pip simply fails to resolve tensorflow.
+**make a virtualenv, and use python 3.12 specifically.**
+`baselines/requirements.txt` pins `tensorflow-cpu<2.20`, and no TF below 2.20
+ships wheels for 3.13 or 3.14 — on a newer interpreter pip simply fails to
+resolve tensorflow.
 
 macOS / Linux:
 
@@ -31,260 +62,106 @@ python3.12 -m venv ~/.venvs/sdp07
 Windows (PowerShell):
 
 ```powershell
-winget install --id Python.Python.3.12 -e     # only if `py -0p` doesn't list 3.12
-py -3.12 -m venv $HOME\.venvs\sdp07           # then open a NEW terminal
+py -3.12 -m venv $HOME\.venvs\sdp07
 $PY = "$HOME\.venvs\sdp07\Scripts\python.exe"
 & $PY -m pip install --upgrade pip
 & $PY -m pip install -r baselines\requirements.txt -r pipeline\requirements.txt
 ```
 
-note the `&`: PowerShell parses a line that *starts* with `$HOME\...` as an
-expression, not a command, and fails with `Unexpected token`. the call operator
-`&` (with the path quoted, or held in `$PY`) is what runs it. `$PY` lives only
-in that terminal tab — re-set it in a new one.
+every `python3 -m ...` below then runs as `~/.venvs/sdp07/bin/python -m ...`
+(macOS/Linux) or `& $PY -m ...` (Windows). note the `&`: PowerShell parses a
+line starting with `$HOME\...` as an expression, not a command.
 
-every `python3 -m ...` command below then runs as
-`~/.venvs/sdp07/bin/python -m ...` (macOS/Linux) or `& $PY -m ...` (Windows).
-
-- **don't `activate`** — spelling out the interpreter avoids shell aliases and
-  a stale `python3` pointing somewhere else
+- **don't `activate`** — spelling out the interpreter avoids shell aliases and a
+  stale `python3`. it is also the single most common reason a command fails with
+  `ModuleNotFoundError: No module named 'tensorflow'` when the install plainly
+  worked: the install went to the venv, the run did not.
 - **keep the venv outside the repo and outside any synced folder** (iCloud,
   OneDrive, Dropbox). a 1.7 GB venv under an iCloud-synced `~/Documents` made
-  `import numpy` take **174 s**; `.gitignore` does not stop a sync client
+  `import numpy` take **174 s** instead of 0.2 s. `.gitignore` does not stop a
+  sync client.
 - **venvs are not relocatable** — console scripts hardcode the interpreter path.
-  recreate it rather than moving it
+  recreate rather than move.
 - only `anomaly.device_check` / `anomaly.device_source` run without TensorFlow
-  (they need just numpy + scipy + pyserial); everything else needs the full install
+  (numpy + scipy + pyserial); everything else needs the full install.
+- **macOS Intel:** `tensorflow-cpu` stops at 2.16.2, which forces `numpy<2` and
+  `setuptools<81`. both constraints are already in the requirements file. Apple
+  Silicon is unaffected.
 
-```bash
-# (optional, only if you'll retrain) put the UBC PPG dataset at Code & Data/
-# it's ~3.8 GB and not in the repo — download link below.
-```
-
-dataset download: [Borealis Data](https://borealisdata.ca/dataset.xhtml?persistentId=doi:10.5683/SP3/HF0OS9) (~3.8 GB, unzip into `Code & Data/`).
-
----
-
-## 2. anomaly detection (current direction)
-
-the one-class stress detector on WESAD wrist BVP. the deployable model ships as
-`anomaly/saved/ae_int8.tflite` (4 MB), so the live dashboard runs **without** WESAD.
-
-### setup (once)
-
-```bash
-python3.12 -m venv ~/.venvs/sdp07          # NOT inside this repo - see below
-~/.venvs/sdp07/bin/pip install -r baselines/requirements.txt -r pipeline/requirements.txt
-```
-
-then prefix commands with `~/.venvs/sdp07/bin/python` (no `activate` needed).
-
-- **do not put the venv under `Documents/`.** if iCloud "Desktop & Documents"
-  sync is on, it tries to sync all ~1.7 GB / 30k files of it: `fileproviderd`
-  and `cloudkitd` peg the CPU and every import crawls (measured: `import numpy`
-  took **174 s** instead of 0.2 s). `.gitignore` does not stop iCloud.
-- **macOS Intel only:** `tensorflow-cpu` stops at 2.16.2 (no x86 wheels after
-  that), which forces `numpy<2` and needs `setuptools<81` — TF 2.16 imports
-  `distutils`, removed from the 3.12 stdlib, and setuptools 81 dropped the shim.
-  both constraints are already in `baselines/requirements.txt`. Apple Silicon
-  gets newer TF and is unaffected.
-- **python 3.12**, not 3.13 — there is no TF wheel for 3.13 on this platform.
-
-### live dashboards
-
-```bash
-python3 -m anomaly.serve                 # → http://localhost:8001
-python3 -m anomaly.serve --subject S17   # other clean demo subjects: S17, S7
-```
-
-two data sources, same dashboard:
-
-```bash
-python3 -m anomaly.serve                      # DUMMY — WESAD replay loop (default)
-python3 -m anomaly.serve --source device      # REAL — MAX30102 over USB, auto-detect port
-python3 -m anomaly.serve --source device --device-port /dev/cu.usbmodem101
-```
-
-- **one process owns the serial port.** stop `serve` / `device_check` (Ctrl-C) and
-  close the Arduino Serial Monitor BEFORE uploading. uploading while the server
-  is attached fails at the post-flash reset with `Serial data stream stopped:
-  Possible serial noise or corruption` — the flash itself usually succeeded, so
-  check with `device_check` before re-flashing. if the TFT comes back white,
-  power-cycle the USB (a RESET press does not re-power the display).
-- flash `sketch_aug3a/` first; it streams `D,t_ms,ir,red` at 25 Hz over USB while the
-  TFT demo keeps running. `anomaly/device_source.py` band-passes it, strips the DC
-  pedestal, and resamples to the 64 Hz the model's 3,840-sample window needs
-- check the hardware **before** starting the server:
-  `python3 -m anomaly.device_source --list-ports` then `python3 -m anomaly.device_source`
-  (live self-test — no TensorFlow, no dashboard in the way)
-- real mode has no ground truth, so `/dev`'s TP/FP scorecard goes blank; the flag,
-  charts, HR and the board's own SpO2 all work. needs `pyserial`
-- ⚠️ the saved threshold in `scorer.npz` was calibrated on WESAD wrist BVP, not on
-  fingertip MAX30102 — the waveform is live and correct, but the stress flag is not
-  meaningful on real hardware until it is recalibrated on your own calm baseline.
-  fix it with `anomaly.device_calibrate` (below); `/dev`'s subtitle says which
-  thresholds are in force
-
-- `/` (alias `/watch`) — **Pulse Watch** product UI (default view)
-- `/dev` — developer dashboard: model flag vs WESAD ground truth (TP/FP/FN/TN +
-  precision/recall), true-stress band, and the **sensitivity slider**
-- both run the same model + `/ws`; the dashboard runs `ae_int8.tflite` — the exact
-  model the ESP32 runs
-
-### evaluate the detectors (needs WESAD in `WESAD/`)
-
-```bash
-python3 -m anomaly.run --model baseline   # statistical floor (~0.64 PR-AUC)
-python3 -m anomaly.run --model ae         # autoencoder, O1 (~0.67)
-python3 -m anomaly.run --model ssl        # self-supervised, O2 (~0.68)
-python3 -m anomaly.wesad                  # window counts per condition
-```
-
-leave-one-subject-out; numbers also in `anomaly/RESULTS.md`. the first run reads
-~13 GB of WESAD pickles once, then caches to `WESAD/_harness_cache/`.
-
-### model-improvement levers (only affect `--model ae`)
-
-```bash
-python3 -m anomaly.run --model ae --bottleneck 256              # real latent (over-complete fix)
-python3 -m anomaly.run --model ae --bottleneck 256 --ch-cap 32  # ESP32-sized  ← DEPLOYED config
-python3 -m anomaly.run --model ae --bottleneck 256 --ch-cap 32 --denoise 0.15   # + noise-robust
-```
-
-deployed config (bottleneck-256 ch-cap32) = LOSO **PR-AUC 0.706 / recall@90spec 0.545**.
-
-### deploy a model (train → compress)
-
-```bash
-python3 -m anomaly.export --bottleneck 256 --ch-cap 32   # train + save ae.keras
-python3 -m anomaly.compress                              # → ae_int8.tflite + int8-calibrated scorer
-```
-
-- always run `compress` after `export` — it rewrites `scorer.npz` on the int8 score
-  scale, which the dashboard needs to flag correctly
-- commit only `ae_int8.tflite` (4 MB) + `scorer.npz`; `ae.keras` (46 MB) +
-  `ae_float32.tflite` (16 MB) are regenerated locally and **gitignored**
-- deployed int8: 4.0 MB, 1.49 ms/window, fits the ESP32-S3-N16R8 (16 MB flash / 8 MB PSRAM)
-
-### per-user calibration (O6 method)
-
-```bash
-python3 -m anomaly.calibrate              # zero-shot vs device-calibrated: PR-AUC 0.75 -> 0.87
-```
-
-### calibrate the flag on the REAL sensor (O6 on our own rig)
-
-`scorer.npz` holds WESAD **wrist** thresholds; the rig is a **fingertip** sensor,
-so the live flag means nothing until it is re-derived on your own calm. this
-records that calm and rewrites the thresholds:
-
-```bash
-python3 -m anomaly.device_check                      # get a steady GOOD TO RECORD first
-python3 -m anomaly.device_calibrate                  # 5 min of calm, sit still
-python3 -m anomaly.serve --source device             # now flags against your own baseline
-```
-
-- writes `anomaly/saved/scorer_device.npz`; `scorer.npz` is left alone, so the
-  WESAD replay demo is unaffected
-- `serve --source device` uses it automatically once it exists. force either one
-  with `--scorer wesad` / `--scorer device` — the before/after is the
-  domain-transfer delta, live
-- windows are gated on the same grip checks `device_check` prints: any tick that
-  fails restarts the 60 s clean run, so a fidget never teaches the model "normal"
-- `--simulate --minutes 2 --min-windows 5` runs the whole path on a synthetic pulse
-  with no board
-  attached and writes nothing — use it to check the tool before spending a
-  real recording on it
-- `--dry-run` reports the numbers without writing. the raw calm windows land in
-  `anomaly/saved/device_calm.npz` (gitignored — personal biometric data)
-
-WESAD is ~17 GB and gitignored — download it and unzip into `WESAD/`. `ae`/`ssl`/
-`serve`/`compress` use TensorFlow (a `baselines/requirements.txt` dep); for GPU install
-`tensorflow[and-cuda]`.
+datasets are not in git and are only needed for build steps:
+WESAD (~17 GB) unzips into `WESAD/`; the UBC PPG set (~3.8 GB, old baseline
+only) into `Code & Data/` — [Borealis Data](https://borealisdata.ca/dataset.xhtml?persistentId=doi:10.5683/SP3/HF0OS9).
 
 ---
 
-## 2b. the board hosts the dashboard (WiFi)
+## 2. the demo
 
-### the one command
+### 2.1 the master
 
 ```bash
-python3 -m anomaly.fleet          # roster -> http://localhost:8002
+python3 -m anomaly.fleet                  # roster -> http://localhost:8002
+python3 -m anomaly.fleet --subnet 192.168.1   # only if a board is on another network
 ```
 
-scans every local subnet for boards, scores each one, pushes each verdict back
-to that board. no IP to look up. `--subnet 192.168.1` only if a board is on a
-network this machine is not. assign a subject to each board from the roster,
-then calibrate — the baseline is stored against the SUBJECT in `data/pulse.db`,
-not against the board, so it follows the person from one board to another. a
-board with nobody on it, or somebody with no baseline yet, gets no flag rather
-than someone else's. sessions open and close on their own as contact comes and
-goes; nobody presses start.
+scans every local subnet for boards, scores each one, pushes each verdict back.
+no IP to look up. assign a subject to each board from the roster, then
+calibrate — the baseline is stored against the **subject** in `data/pulse.db`,
+not the board, so it follows the person from one board to another. a board with
+nobody on it, or somebody with no baseline, gets no flag rather than someone
+else's. sessions open and close on their own as contact comes and goes.
 
-everything below is the single-device detail behind that command.
+done from the roster, not the command line:
 
-the ESP32 serves the dashboard itself and streams its own sensor over WiFi. the
-PC becomes an optional scorer rather than the thing everything runs on.
+- **assign / rename / delete a subject** — the panel on the right
+- **calibrate** — per board; the same button on the board's own dashboard now
+  reaches the master too, and progress shows in both places
+- **review a flag** — real / artifact / ? on each history row. these are stored
+  for evaluation; nothing consumes them for flagging
+- **clear a board's flag history** — `clear` in the History header. the saved
+  waveforms under `data/flags/` stay on disk
+- **tuning** — live sliders for the detection constants, persisted across
+  restarts
 
-```
-browser --HTTP/WS--> ESP32   dashboard + 64 Hz waveform + HR/SpO2 + TFT verdict
-                      ^  |
-             GET /flag |  | ws:// waveform
-                      |  v
-                     PC   anomaly.master (autoencoder, headless)
-```
+useful flags: `--device <ip>` (repeatable, for a board off this subnet),
+`--port`, `--rescan <seconds>`, `--db <path>`.
 
-**the model is NOT on the board.** the ESP32 does sensing, conditioning, the web
-server and the display; the PC scores. that satisfies O4 but NOT DoD item 4 /
-O7, which still need an on-device model. the 520-byte Mahalanobis baseline in
-`anomaly/baseline.py` is the intended path there (0.64 PR-AUC vs the
-autoencoder's 0.71 — that gap IS the "accuracy cost" the DoD asks for).
+### 2.2 the board
 
-### 1. put the board on WiFi
+**put it on WiFi.** two ways; anything stored on the board wins over the header,
+since NVS survives a reflash.
 
-two ways; anything stored on the board wins over the header, since NVS survives
-a reflash.
-
-**hard-coded (recommended).** copy `sketch_aug3a/secrets.example.h` to
-`sketch_aug3a/secrets.h` (gitignored) and fill in:
-
-```c
-#define WIFI_SSID "yourssid"
-#define WIFI_PASS "yourpassword"
-```
-
-if the board already has credentials stored, clear them once, then power-cycle:
+hard-coded (recommended): copy `sketch_aug3a/secrets.example.h` to
+`sketch_aug3a/secrets.h` (gitignored) and fill in `WIFI_SSID` / `WIFI_PASS`.
+if the board already has credentials stored, clear them once and power-cycle:
 
 ```bash
 python3 -m anomaly.device_wifi --forget
 ```
 
-**over USB.** no reflash needed, useful for switching networks:
+over USB, no reflash — useful when switching networks:
 
 ```bash
 python3 -m anomaly.device_wifi --ssid MyNetwork      # prompts for the password
 python3 -m anomaly.device_wifi --status              # what is it on? what IP?
 ```
 
-the IP appears on the TFT header and on serial as `# wifi connected ssid=... ip=...`.
-**2.4 GHz only** — the ESP32 cannot join a 5 GHz-only SSID.
+**2.4 GHz only** — the ESP32 cannot join a 5 GHz-only SSID. the IP appears on
+the TFT header and on serial as `# wifi connected ssid=... ip=...`.
 
-### 2. rebuild the web assets after ANY dashboard edit
-
-the pages are gzipped into a C header and compiled into the firmware. change
-anything in `pulse/` or `anomaly/static/` and the board keeps serving the old
-copy until you re-run this and reflash:
+**rebuild the web assets. this is not optional.** the dashboards are gzipped
+into a C header and compiled into the firmware. `sketch_aug3a/web_assets.h` is
+gitignored, so a fresh clone does not have it and the sketch will not compile
+until you generate it — and after any edit under `pulse/` or `anomaly/static/`
+the board keeps serving the old copy until you re-run this and reflash:
 
 ```bash
 python3 sketch_aug3a/make_web_assets.py     # -> sketch_aug3a/web_assets.h
 ```
 
-(232 KB of dashboard — 68 KB gzipped in flash.)
+stdlib only, so a bare `python3` is fine here — no venv needed.
 
-### 3. flash, then open the board's IP
-
-needs two Arduino libraries, both by **ESP32Async** (older forks do not build
-against ESP32 core 3.x): **ESP Async WebServer** and **Async TCP**.
+**flash it.** needs two Arduino libraries, both by **ESP32Async** (older forks
+do not build against ESP32 core 3.x): **ESP Async WebServer** and **Async TCP**.
 
 ```
 http://<board-ip>/          Pulse Watch
@@ -299,184 +176,233 @@ http://<board-ip>/health    plain text diagnostics -- try this FIRST
 - `skip` = frames dropped for websocket backpressure (a weak link)
 - `rec` = times the sensor was re-initialised after stalling
 
-### 4. score it from the PC
+### 2.3 demo data, when there is no hardware
 
-`anomaly.master` has **no web page**. it is a headless process: reads the
-board's stream, runs the autoencoder, pushes the verdict back.
+Pulse Watch has three data sources, picked in Settings:
+
+- **Live** — the sensor over WebSocket. if it will not connect the page stays
+  **offline**; it does not quietly fall back to a demo (it used to, and that was
+  indistinguishable from working)
+- **Simulated** — a scripted scenario, no model involved. edit the `SIM` table
+  at the top of `pulse/Pulse Watch.dc.html`: `label` is ground truth, `level` is
+  what the detector reports, and they are deliberately out of step so the
+  10–40 s detection lag is visible. seeded, so it plays identically every time
+- **WESAD S5** — a recorded clip of real physiology scored by the deployed
+  model. this is the one to show when somebody asks whether any of it is real
+
+both demos also drive the board's TFT, marked `DEMO` on the panel so a recording
+can never be mistaken for a measurement. the "simulate poor signal" button
+injects an artifact — seconds of raised amplitude, like a real knock — and the
+detector holds its last verdict instead of flagging, which is the quality gate
+doing its job.
+
+### 2.4 the single-stream dashboard
+
+separate from the fleet: one stream, one page, with a scorecard against ground
+truth. run `serve` **or** `fleet`, not both.
 
 ```bash
-python3 -m anomaly.master --host 10.49.10.173      # a full URL works too
+python3 -m anomaly.serve                      # WESAD replay (default) -> :8001
+python3 -m anomaly.serve --subject S17        # other clean subjects: S17, S7
+python3 -m anomaly.serve --source device      # a board over USB, auto-detect port
+python3 -m anomaly.serve --source device --device-port /dev/cu.usbmodem101
 ```
 
-look at the dashboard on the **board's** IP, not localhost. run `serve.py` OR
-`master.py`, never both — `serve.py` is the older all-in-one where the PC
-hosts the dashboard and reads the sensor over USB.
+- `/` (alias `/watch`) — Pulse Watch, the product UI
+- `/dev` — developer dashboard: the model's flag against the WESAD label live
+  (TP/FP/FN/TN, precision/recall, a true-stress band). this is the "is the flag
+  from the model or from the dataset?" answer. real mode has no ground truth, so
+  the scorecard goes blank; everything else works
+- both run `ae_int8.tflite`, the same file the ESP32 runs
 
-expect `filling window 1360/3840` for the first 60 s: the model needs a full
-window before it can score anything.
+⚠️ the saved threshold in `scorer.npz` was calibrated on WESAD **wrist** BVP,
+not a fingertip MAX30102. the waveform is live and correct but the flag is not
+meaningful on real hardware until recalibrated (below). `/dev`'s subtitle says
+which thresholds are in force.
 
-### detection latency — what to expect
+**calibrate the USB rig on your own calm:**
+
+```bash
+python3 -m anomaly.device_check                # get a steady GOOD TO RECORD first
+python3 -m anomaly.device_calibrate            # 5 min of calm, sit still
+python3 -m anomaly.serve --source device       # now flags against your baseline
+```
+
+writes `anomaly/saved/scorer_device.npz` and leaves `scorer.npz` alone, so the
+WESAD demo is unaffected. `serve --source device` picks it up automatically;
+force either with `--scorer wesad` / `--scorer device` — that before/after *is*
+the domain-transfer delta, live. windows are gated on the same grip checks
+`device_check` prints, so a fidget never teaches the model "normal".
+`--simulate --minutes 2 --min-windows 5` runs the whole path on a synthetic
+pulse with no board attached and writes nothing. `--dry-run` reports without
+writing. raw calm windows land in `anomaly/saved/device_calm.npz` (gitignored —
+personal biometric data).
+
+**check the hardware before blaming the model:**
+
+```bash
+python3 -m anomaly.device_source --list-ports
+python3 -m anomaly.device_source            # live self-test, no TensorFlow
+```
+
+---
+
+## 3. the store
+
+one SQLite file, `data/pulse.db`, holding subjects, baselines (including the
+`k_sigma` that survives a re-wear), sessions, readings, flags and the tuning
+values. gitignored — it is personal biometric data.
+
+```bash
+python3 -m anomaly.db                         # row counts + every subject's baseline
+python3 -m anomaly.db --backup pulse.bak.db   # consistent snapshot, safe while running
+```
+
+**use `--backup` to move subjects between machines.** copying `pulse.db` on its
+own is not a backup: in WAL mode the newest commits sit in `pulse.db-wal` until
+a checkpoint, so a plain copy silently comes back missing the most recent work.
+on the destination, stop the master, drop the file in as `data/pulse.db`, and
+delete any stale `pulse.db-wal` / `pulse.db-shm` beside it.
+
+`data/flags/event_*.npz` are the 60 s waveforms behind each flag. `window_path`
+in the store is an absolute path, so those links do not survive a move —
+copy the folder if you want the waveforms, but expect the roster not to find
+them.
+
+---
+
+## 4. build steps
+
+### evaluate (needs WESAD)
+
+```bash
+python3 -m anomaly.run --model baseline   # statistical floor (~0.64 PR-AUC)
+python3 -m anomaly.run --model ae         # autoencoder, O1 (~0.67)
+python3 -m anomaly.run --model ssl        # self-supervised, O2 (~0.68)
+python3 -m anomaly.wesad                  # window counts per condition
+```
+
+leave-one-subject-out, subject-wise splits. numbers also in
+`anomaly/RESULTS.md`. the first run reads ~13 GB of pickles once, then caches to
+`WESAD/_harness_cache/`.
+
+model-improvement levers, `--model ae` only:
+
+```bash
+python3 -m anomaly.run --model ae --bottleneck 256              # real latent
+python3 -m anomaly.run --model ae --bottleneck 256 --ch-cap 32  # ESP32-sized  <- DEPLOYED
+python3 -m anomaly.run --model ae --bottleneck 256 --ch-cap 32 --denoise 0.15
+```
+
+deployed config = LOSO **PR-AUC 0.706 / recall@90spec 0.545**.
+
+### ship a new model
+
+```bash
+python3 -m anomaly.export --bottleneck 256 --ch-cap 32   # train + save ae.keras
+python3 -m anomaly.compress                              # -> ae_int8.tflite + int8 scorer
+```
+
+**always run `compress` after `export`** — it rewrites `scorer.npz` on the int8
+score scale, which the dashboards need to flag correctly. commit only
+`ae_int8.tflite` (4 MB) and `scorer.npz`; `ae.keras` (46 MB) and
+`ae_float32.tflite` (16 MB) are gitignored local artifacts. deployed int8:
+4.0 MB, 1.49 ms/window, fits the ESP32-S3-N16R8.
+
+### rebake the WESAD demo clip
+
+only needed if the model or the clip changes — the baked clip travels inside
+`pulse/Pulse Watch.dc.html`, which is tracked, so a fresh clone does not need
+WESAD to run the demo.
+
+```bash
+python3 -m anomaly.make_demo_clip              # -> pulse/Pulse Watch.dc.html
+python3 -m anomaly.make_demo_clip --dry-run    # report the size, write nothing
+```
+
+then re-run `make_web_assets.py` and reflash.
+
+### the rest
+
+```bash
+python3 -m anomaly.calibrate      # per-user calibration on WESAD (O6 method)
+python3 -m anomaly.make_plots     # result figures
+```
+
+---
+
+## 5. detection latency — what to expect
 
 dominated by the 60 s window, not the network:
 
 | stage | cost |
 |---|---|
 | 60 s window | a change at t=0 only fills the window at t=60 s |
-| scoring cadence | 1 s (`--every`) |
+| scoring cadence | 1 s |
 | EMA smoothing | ~2.3 s to 63%, ~5.3 s to 90% |
 | push to the board | milliseconds |
 
-so **~10-40 s** from event to flag, depending on how strongly it scores. fine
-for mental stress (the response builds over minutes); far too slow for falls.
-
-### gotchas that cost real time
-
-1. **do not leave USB plugged in with nothing reading it.** `Serial.write()`
-   blocks until the CDC timeout when the buffer fills; at 40 samples/s that
-   throttled the whole sample loop to one iteration every few seconds and looked
-   exactly like the sensor dying. fixed with `setTxTimeoutMs(0)` plus an
-   `if (!Serial) return` guard, but it is the first thing to suspect if the loop
-   crawls.
-2. **`--host` takes an address, not a URL** — both are accepted now, but
-   `ws://http://ip//ws` was a real failure mode.
-3. **weak WiFi shows up as lag, then a hang.** `ws.textAll()` only QUEUES;
-   queueing faster than the link drains grows the queue until the heap dies. the
-   firmware now skips frames when `availableForWriteAll()` is false. below about
-   -80 dBm, move the board closer.
-4. **Pulse Watch falls back to a MOCK replay** if the websocket does not open
-   within 3 s, complete with fabricated events. it looks like it is working when
-   it is not. `/dev` has no such fallback.
+so **~10–40 s** from event to flag. fine for mental stress, which builds over
+minutes; far too slow for falls.
 
 ---
 
-## 3. real-time dashboard (earlier cardiac demo)
+## 6. troubleshooting
 
-a FastAPI + WebSocket server streams to a browser UI (drawn with uPlot). it
-reuses the classifier, replay, vitals, and fall-detector code unchanged.
+**`ModuleNotFoundError: tensorflow` (or `fastapi`) right after a clean install**
+you ran a bare `python3`, not the venv. see setup.
 
-### start it
+**the sketch will not compile: `web_assets.h` not found**
+it is gitignored. run `python3 sketch_aug3a/make_web_assets.py`.
 
-```bash
-python3 pipeline/server.py
-```
+**dashboard edits do not show on the board**
+same command, then reflash. the board serves a compiled-in copy.
 
-wait for `warm-up done in Xs` (the model loads at startup so the stream never
-hitches), then open `http://localhost:8000` and click **▶ Start**.
+**the roster says the master is running older code**
+it serves the page from disk but its routes were fixed at startup. restart it.
+the page and the master exchange an API version so this says so plainly instead
+of failing with a bare "failed".
 
-**from a phone or another device on the same WiFi:**
+**upload fails at the post-flash reset**
+`Serial data stream stopped: Possible serial noise or corruption` — one process
+owns the serial port. stop `serve` / `device_check` and close the Arduino Serial
+Monitor before uploading. the flash itself usually succeeded, so check with
+`device_check` before re-flashing. if the TFT comes back white, power-cycle the
+USB; a RESET press does not re-power the display.
 
-```bash
-http://<this-device-ip>:8000
-```
+**the sample loop crawls and it looks like the sensor died**
+do not leave USB plugged in with nothing reading it. `Serial.write()` blocks
+until the CDC timeout when the buffer fills. guarded now with
+`setTxTimeoutMs(0)` plus `if (!Serial) return`, but suspect it first.
 
-(the hub device runs the server; the phone is just a browser client.)
+**lag, then a hang, on weak WiFi**
+`ws.textAll()` only queues; queueing faster than the link drains grows the queue
+until the heap dies. the firmware skips frames when `availableForWriteAll()` is
+false. below about −80 dBm, move the board closer.
 
-### run it in the background
-
-```bash
-nohup python3 pipeline/server.py > /tmp/dashboard.log 2>&1 &
-```
-
-### shut it down
-
-foreground: press `Ctrl+C`. background:
-
-```bash
-pkill -f "pipeline/server.py"
-```
-
-if the port is stuck after a crash:
+**"Address already in use"**
 
 ```bash
-lsof -i :8000          # find what's holding port 8000
-fuser -k 8000/tcp      # force-kill it
+lsof -i :8002          # find what is holding the port
 ```
 
-### use a different port
-
-```bash
-PORT=8001 python3 pipeline/server.py
-```
+**the phone cannot reach a dashboard**
+same WiFi, and use the host's LAN IP, not `localhost`. the servers bind
+`0.0.0.0` already; if it still fails the host firewall is blocking the port.
 
 ---
 
-## 4. terminal-only pipeline (no browser)
+## 7. git
 
 ```bash
-python3 pipeline/run_cli.py            # loops forever
-python3 pipeline/run_cli.py --once     # one 92-second pass, then exit
-# Ctrl+C stops the loop
-```
-
----
-
-## 5. inference sanity check
-
-quick "the model loads and predicts" test, no streaming:
-
-```bash
-python3 baselines/inference_demo.py
-```
-
-should print something like `Overall: 28/30 correct (93%)`.
-
----
-
-## 6. training and model artifacts
-
-### train from scratch
-
-```bash
-python3 baselines/train.py --preset phase_a    # ~12 min on CPU
-```
-
-### tweak training
-
-```bash
-python3 baselines/train.py --preset phase_a --epochs 200      # longer
-python3 baselines/train.py --preset phase_a --dropout 0.3     # different dropout
-python3 baselines/train.py --preset phase_a --print-config    # config, no training
-python3 baselines/train.py --list-presets                     # list presets
-```
-
-### quantize to int8 TFLite
-
-```bash
-python3 baselines/quantize.py --preset phase_a
-```
-
-drops `model_int8.tflite` in the run folder.
-
-### rebuild the demo data file
-
-```bash
-# only if the full dataset is present at Code & Data/
-python3 pipeline/make_demo_data.py
-```
-
-### regenerate the result PNGs
-
-```bash
-python3 baselines/make_plots.py
-```
-
----
-
-## 7. git workflow
-
-```bash
-git status --short          # see what changed
-
-git add .                   # local-only files are already excluded
-git status                  # review before committing
-
+git status --short          # local-only files are already excluded
+git add .
 git commit -m "your message here"
 git push
-
-git pull                    # get the latest
+git pull
 ```
 
-undo the last commit (before pushing):
+undo the last commit, before pushing:
 
 ```bash
 git reset --soft HEAD~1     # keep the changes
@@ -485,79 +411,45 @@ git reset --hard HEAD~1     # discard them too (destructive)
 
 ---
 
-## 8. troubleshooting
+## 8. prior work — kept, not the current direction
 
-### `ModuleNotFoundError: No module named 'fastapi'` (or `uvicorn`)
-
-```bash
-pip3 install -r pipeline/requirements.txt
-```
-
-### `ModuleNotFoundError: No module named 'tensorflow'`
+these predate the pivot to one-class anomaly detection. they are a clean-signal
+reference point and the streaming pattern the current dashboards were built
+from. **do not point a demo at them.**
 
 ```bash
-pip3 install -r baselines/requirements.txt
+python3 pipeline/server.py               # old cardiac dashboard -> :8000
+python3 pipeline/run_cli.py --once       # terminal-only, one 92 s pass
+python3 baselines/train.py --preset phase_a     # supervised 3-class, ~12 min CPU
+python3 baselines/quantize.py --preset phase_a  # -> model_int8.tflite
+python3 baselines/inference_demo.py             # "Overall: 28/30 correct (93%)"
+python3 baselines/make_plots.py
 ```
 
-### `FileNotFoundError: No trained model found in runs/`
-
-train it first:
+`anomaly.master` sits in the same category for a different reason: it scores one
+networked board headlessly and pushes the verdict back, which is what `fleet`
+does with discovery, a roster and a store on top.
 
 ```bash
-python3 baselines/train.py --preset phase_a
+python3 -m anomaly.master --host 10.49.10.173
 ```
-
-### `FileNotFoundError: pipeline/demo_data.csv not found`
-
-it should be in the repo. if not, rebuild it from the dataset:
-
-```bash
-python3 pipeline/make_demo_data.py
-```
-
-### page loads but predictions never update
-
-click **▶ Start** — the stream only runs while it's active. the dot in the
-top-left goes green only when the WebSocket is connected.
-
-### "Address already in use"
-
-something else is on port 8000. kill it or pick another port:
-
-```bash
-pkill -f "pipeline/server.py"
-# or:
-PORT=8001 python3 pipeline/server.py
-```
-
-### phone can't reach the dashboard
-
-put the phone on the **same WiFi** as the host and use the host's LAN IP (e.g.
-`http://172.30.140.43:8000`), not `localhost`. the server binds `0.0.0.0`
-already; if it still fails, the host firewall is blocking port 8000.
-
-### first prediction is slow
-
-it isn't anymore — the model is warmed up at startup (you'll see
-`warm-up done in Xs`). later calls are ~tens of ms.
 
 ---
 
 ## 9. where things live
 
-| File / folder | Purpose |
+| path | purpose |
 |---|---|
-| `anomaly/` | **one-class anomaly detector (current direction)** |
-| `anomaly/serve.py` + `anomaly/static/` | the live anomaly dashboards (`/` Pulse Watch, `/dev` developer) |
-| `anomaly/saved/ae_int8.tflite` | deployed model — int8 TFLite (4 MB, committed; dashboard + ESP32 run this) |
-| `anomaly/RESULTS.md` | one-class detector results (PR-AUC, recall@90%) |
+| `anomaly/` | **the one-class anomaly detector — current direction** |
+| `anomaly/fleet.py` + `static/fleet.html` | the master: discovery, scoring, roster, store |
+| `anomaly/db.py` | the SQLite store behind the roster |
+| `anomaly/serve.py` + `static/` | single-stream dashboards (`/` watch, `/dev`) |
+| `anomaly/saved/ae_int8.tflite` | the deployed model — dashboards and ESP32 both run this |
+| `anomaly/RESULTS.md` | PR-AUC, recall@90% spec, per-subject variance |
+| `pulse/Pulse Watch.dc.html` | the product UI, and the baked demo sources |
+| `sketch_aug3a/` | ESP32-S3 firmware + the web-asset baker |
+| `data/pulse.db` | subjects, baselines, sessions, flags (gitignored) |
 | `WESAD/` | WESAD dataset (~17 GB, not in git) |
-| `baselines/runs/2026-05-17_163328_phase_a/model.keras` | the earlier supervised model |
-| `baselines/runs/2026-05-17_163328_phase_a/model_int8.tflite` | quantized model for ESP32 |
-| `baselines/inference_lib.py` | the `Classifier` API |
-| `pipeline/server.py` | earlier cardiac dashboard (legacy; current one is `anomaly/serve.py`) |
-| `pipeline/static/` | browser UI (`index.html` + vendored uPlot) |
-| `pipeline/replay.py` | synthetic data source (demo mode) |
-| `pipeline/fall_detector.py` | 4-phase fall-detection state machine |
-| `pipeline/SENSORS_SETUP.md` | **guide for swapping in real MAX30102 + MPU6050** |
-| `Code & Data/` | the 3.8 GB training dataset (not in git) |
+| `pipeline/` | prior work — streaming pattern, `vitals.py`, sensor setup guide |
+| `baselines/` | prior work — the supervised cardiac model |
+| `Code & Data/` | UBC PPG dataset (~3.8 GB, not in git) |

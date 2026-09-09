@@ -146,6 +146,20 @@ uint32_t hostBpmMs = 0;
 int32_t hostFlag = -1;                // -1 unknown, 0 calm, 1 stressed
 int32_t hostLevel = 0;                // 0-100, the deviation percentage
 uint32_t hostFlagMs = 0;
+// The dashboard's WESAD demo pushes verdicts here too, so the panel shows the
+// recording instead of "no finger" while somebody is watching the demo. It is
+// marked DEMO on screen and it locks the master out while it runs -- two
+// writers on one panel would flicker between a recording and a real reading,
+// which is the worst of both.
+int8_t hostDemo = 0;
+uint32_t hostDemoMs = 0;
+// A demo supplies its own SpO2 or it does not, and the board simply shows what
+// it is given. The simulated scenario has one; the WESAD clip cannot -- that
+// wrist sensor records BVP from a single photodiode, and SpO2 is a red/IR
+// ratio, so there is no number to send and none that could honestly be shown.
+int32_t hostSpo2 = 0;
+uint32_t hostSpo2Ms = 0;
+const uint32_t DEMO_TTL = 4000;       // the page pushes once a second
 
 // WHY there is no verdict, when there is none. The master used to push only
 // once it had a real score, so for the first 60 s -- while its window filled --
@@ -165,6 +179,7 @@ char hostSubject[28] = "";
 int32_t hostWait = 0;                 // seconds of warm-up left
 int32_t shownWait = -1;               // last warm-up number painted
 int32_t shownFlag = -2;               // what is currently painted, to avoid redraws
+bool shownDemo = false;               // was the DEMO badge painted?
 uint32_t irDcDisplay = 0;             // slow IR average, for the no-finger check
 // Big enough for "W,<ssid>,<password>": an SSID is up to 32 chars and a WPA2
 // passphrase up to 63, so the old 16-byte buffer could never carry credentials.
@@ -527,7 +542,16 @@ void drawStatus() {
   // STRESSED here would contradict the number beside it
   bool settling = (hostFlag == 1 && hostThrLevel > 0.0f &&
                    hostLevel < 100.0f * hostThrLevel);
-  int32_t state = (!finger) ? -1
+  // A recording has no finger on the sensor and no master behind it, so both
+  // gates would answer "--" forever. Skip them, and say DEMO on the panel.
+  bool demo = (hostDemo != 0 && (millis() - hostDemoMs) < DEMO_TTL);
+  if (!demo) hostDemo = 0;
+  int32_t state = demo
+                ? ((strcmp(hostState, "warm") == 0) ? -3
+                   : elevated ? -6
+                   : settling ? -7
+                   : hostFlag)
+                : (!finger) ? -1
                 : (!fresh) ? -2
                 : (strcmp(hostState, "warm") == 0) ? -3
                 : (strcmp(hostState, "hold") == 0) ? -4
@@ -537,11 +561,13 @@ void drawStatus() {
                 : hostFlag;
 
   // the warm-up counts down, so it has to repaint even when the state is the same
-  if (state == shownFlag && !(state == -3 && hostWait != shownWait)) {
+  if (state == shownFlag && demo == shownDemo &&
+      !(state == -3 && hostWait != shownWait)) {
     return;                    // nothing changed, leave the panel alone
   }
   shownFlag = state;
   shownWait = hostWait;
+  shownDemo = demo;
 
   uint16_t bg, fg;
   const char *word;
@@ -591,6 +617,15 @@ void drawStatus() {
   int16_t sw = strlen(sub) * 6;
   tft.setCursor(GRAPH_X + (GRAPH_WIDTH - sw) / 2, GRAPH_Y + 70);
   tft.print(sub);
+
+  // Nobody should be able to mistake a recording for a measurement, least of
+  // all on the device's own screen.
+  if (demo) {
+    tft.setTextSize(1);
+    tft.setTextColor(fg);
+    tft.setCursor(GRAPH_X + GRAPH_WIDTH - 32, GRAPH_Y + 6);
+    tft.print("DEMO");
+  }
 
   if (state == 0 || state == 1) {                // deviation bar
     int bx = GRAPH_X + 30, bw = GRAPH_WIDTH - 60, by = GRAPH_Y + 88;
@@ -950,6 +985,13 @@ void webBegin() {
       req->send(400, "text/plain", "f must be 0 or 1");
       return;
     }
+    bool isDemo = req->hasParam("d") && req->getParam("d")->value().toInt() == 1;
+    if (!isDemo && hostDemo != 0 && (millis() - hostDemoMs) < DEMO_TTL) {
+      req->send(200, "text/plain", "demo");   // the demo owns the panel for now
+      return;
+    }
+    hostDemo = isDemo ? 1 : 0;
+    if (isDemo) hostDemoMs = millis();
     hostFlag = f;
     hostLevel = constrain(l, 0, 100);
     if (req->hasParam("s")) {
@@ -963,6 +1005,14 @@ void webBegin() {
       hostSubject[sizeof(hostSubject) - 1] = 0;
     }
     hostWait = req->hasParam("w") ? req->getParam("w")->value().toInt() : 0;
+    if (req->hasParam("b")) {         // heart rate, the WiFi counterpart of "H,"
+      int b = req->getParam("b")->value().toInt();
+      if (b > 0) { hostBpm = b; hostBpmMs = millis(); }
+    }
+    if (req->hasParam("o")) {         // blood oxygen, when the sender has one
+      int o = req->getParam("o")->value().toInt();
+      if (o >= 70 && o <= 100) { hostSpo2 = o; hostSpo2Ms = millis(); }
+    }
     // the master is the only authority on where the line sits
     if (req->hasParam("t")) {         // where the master's threshold sits, 0-100
       int t = req->getParam("t")->value().toInt();
@@ -1368,9 +1418,18 @@ void updateNumbers() {
   // sending on contact loss, but a stale or buggy sender cannot put a number
   // back on this screen.
   bool fingerOn = (irDcDisplay > 50000);
-  bool hostFresh = fingerOn && hostBpm > 0 && (millis() - hostBpmMs) < HOST_BPM_TTL;
+  // The one deliberate exception to that rule is the dashboard's WESAD demo:
+  // it is a recording, so it has no finger by definition. It gets a number
+  // only if the demo actually pushed one -- never the board's own estimate,
+  // which would be a reading of the empty sensor -- and the panel beside it
+  // says DEMO, so it cannot be taken for a measurement of whoever is holding
+  // the board.
+  bool demo = (hostDemo != 0 && (millis() - hostDemoMs) < DEMO_TTL);
+  bool hostFresh = (fingerOn || demo) && hostBpm > 0 &&
+                   (millis() - hostBpmMs) < HOST_BPM_TTL;
   int32_t showBpm = hostFresh ? hostBpm : bpmLive;
-  bool showValid = fingerOn && (hostFresh ? true : (bpmValid != 0));
+  bool showValid = demo ? hostFresh
+                        : (fingerOn && (hostFresh ? true : (bpmValid != 0)));
 
   if (showValid) {
     tft.setTextColor(ILI9341_GREEN);
@@ -1387,7 +1446,14 @@ void updateNumbers() {
 
   tft.setTextSize(3);
 
-  if (fingerOn && validSpo2 && spo2 >= 70 && spo2 <= 100) {
+  bool hostSpo2Fresh = demo && hostSpo2 >= 70 && hostSpo2 <= 100 &&
+                       (millis() - hostSpo2Ms) < HOST_BPM_TTL;
+  if (hostSpo2Fresh) {
+    tft.setTextColor(ILI9341_CYAN);
+    tft.setCursor(165, 70);
+    tft.print(hostSpo2);
+    tft.print("%");
+  } else if (!demo && fingerOn && validSpo2 && spo2 >= 70 && spo2 <= 100) {
     tft.setTextColor(ILI9341_CYAN);
     tft.setCursor(165, 70);
     tft.print(spo2);

@@ -173,7 +173,7 @@ class Engine:
         self._reset()
         # sensitivity (0–1) that corresponds to the saved default threshold
         level0 = self.det.level(self.det.threshold)
-        self.sensitivity = float(min(1.0, max(0.0, (0.62 - level0) / 0.40)))
+        self.sensitivity = float(min(1.0, max(0.0, (level0 - 0.10) / 0.80)))   # inverse of set_sensitivity
 
     def _reset(self):
         self.disp_idx = deque(maxlen=DISPLAY)
@@ -379,7 +379,7 @@ class Engine:
         self.det.calibrated_on = "device"
         self.det.scorer_name = DEVICE_SCORER
         level0 = self.det.level(self.det.threshold)
-        self.sensitivity = float(min(1.0, max(0.0, (0.62 - level0) / 0.40)))
+        self.sensitivity = float(min(1.0, max(0.0, (level0 - 0.10) / 0.80)))   # inverse of set_sensitivity
         if self.score_ema is not None:
             self.level = self.det.level(self.score)
             self.flag = self.det.flag(self.score)
