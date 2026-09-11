@@ -1,7 +1,22 @@
 # command cheat sheet
 
-every command you need, copy-paste ready. run them from the **repo root** unless
-noted, and with the venv interpreter (see setup) rather than a bare `python3`.
+every command you need, copy-paste ready, from the **repo root**.
+
+**start every terminal with this**, then every command below works exactly as
+written:
+
+```bash
+source ~/.venvs/sdp07/bin/activate      # macOS / Linux
+```
+
+```powershell
+& $HOME\.venvs\sdp07\Scripts\Activate.ps1    # Windows PowerShell
+```
+
+your prompt gains a `(sdp07)` and `python` becomes the venv's. without it you
+are running the system python, which has none of the dependencies installed —
+that is what `ModuleNotFoundError: No module named 'scipy'` (or `tensorflow`,
+or `fastapi`) means, every time. first-time setup is section 1.
 
 ---
 
@@ -34,7 +49,7 @@ current direction — see the pivot table in the project brief.
 **if you remember nothing else:**
 
 ```bash
-python3 -m anomaly.fleet
+python -m anomaly.fleet
 ```
 
 ---
@@ -68,28 +83,16 @@ $PY = "$HOME\.venvs\sdp07\Scripts\python.exe"
 & $PY -m pip install -r baselines\requirements.txt -r pipeline\requirements.txt
 ```
 
-every `python3 -m ...` below then runs as `~/.venvs/sdp07/bin/python -m ...`
-(macOS/Linux) or `& $PY -m ...` (Windows). note the `&`: PowerShell parses a
-line starting with `$HOME\...` as an expression, not a command.
+note the `&` in the PowerShell lines: PowerShell parses a line starting with
+`$HOME\...` as an expression, not a command, so it needs the call operator.
 
-- **prefer not to `activate`** — spelling out the interpreter avoids shell
-  aliases and a stale `python3`. it is also the single most common reason a
-  command fails with `ModuleNotFoundError: No module named 'tensorflow'` when
-  the install plainly worked: the install went to the venv, the run did not.
-- **but if you want to activate, here is how.** it is a normal thing to do and
-  nothing breaks:
-
-  ```bash
-  source ~/.venvs/sdp07/bin/activate     # macOS / Linux
-  python -m anomaly.fleet                # note: `python`, not `python3`
-  deactivate
-  ```
-
-  ```powershell
-  & $HOME\.venvs\sdp07\Scripts\Activate.ps1     # Windows
-  python -m anomaly.fleet
-  deactivate
-  ```
+- **activate once per terminal** (the block at the top of this file), then use
+  `python`, not `python3`. `deactivate` when done, or just close the tab.
+- **or skip activation and spell out the interpreter** —
+  `~/.venvs/sdp07/bin/python -m anomaly.fleet`. more typing, but immune to shell
+  aliases and to a stale `python3`. either is fine. what never works is a bare
+  `python3`: that is the system interpreter, and none of the dependencies are
+  installed there.
 
   other Windows shells, if you are not in PowerShell:
 
@@ -145,8 +148,8 @@ only) into `Code & Data/` — [Borealis Data](https://borealisdata.ca/dataset.xh
 ### 2.1 the master
 
 ```bash
-python3 -m anomaly.fleet                  # roster -> http://localhost:8002
-python3 -m anomaly.fleet --subnet 192.168.1   # only if a board is on another network
+python -m anomaly.fleet                  # roster -> http://localhost:8002
+python -m anomaly.fleet --subnet 192.168.1   # only if a board is on another network
 ```
 
 scans every local subnet for boards, scores each one, pushes each verdict back.
@@ -181,14 +184,14 @@ hard-coded (recommended): copy `sketch_aug3a/secrets.example.h` to
 if the board already has credentials stored, clear them once and power-cycle:
 
 ```bash
-python3 -m anomaly.device_wifi --forget
+python -m anomaly.device_wifi --forget
 ```
 
 over USB, no reflash — useful when switching networks:
 
 ```bash
-python3 -m anomaly.device_wifi --ssid MyNetwork      # prompts for the password
-python3 -m anomaly.device_wifi --status              # what is it on? what IP?
+python -m anomaly.device_wifi --ssid MyNetwork      # prompts for the password
+python -m anomaly.device_wifi --status              # what is it on? what IP?
 ```
 
 **2.4 GHz only** — the ESP32 cannot join a 5 GHz-only SSID. the IP appears on
@@ -204,7 +207,8 @@ the board keeps serving the old copy until you re-run this and reflash:
 python3 sketch_aug3a/make_web_assets.py     # -> sketch_aug3a/web_assets.h
 ```
 
-stdlib only, so a bare `python3` is fine here — no venv needed.
+stdlib only (`gzip`, `os`, `sys`), so this one really does run on a bare
+`python3` — it is the only command here that does.
 
 **flash it.** needs two Arduino libraries, both by **ESP32Async** (older forks
 do not build against ESP32 core 3.x): **ESP Async WebServer** and **Async TCP**.
@@ -248,10 +252,10 @@ separate from the fleet: one stream, one page, with a scorecard against ground
 truth. run `serve` **or** `fleet`, not both.
 
 ```bash
-python3 -m anomaly.serve                      # WESAD replay (default) -> :8001
-python3 -m anomaly.serve --subject S17        # other clean subjects: S17, S7
-python3 -m anomaly.serve --source device      # a board over USB, auto-detect port
-python3 -m anomaly.serve --source device --device-port /dev/cu.usbmodem101
+python -m anomaly.serve                      # WESAD replay (default) -> :8001
+python -m anomaly.serve --subject S17        # other clean subjects: S17, S7
+python -m anomaly.serve --source device      # a board over USB, auto-detect port
+python -m anomaly.serve --source device --device-port /dev/cu.usbmodem101
 ```
 
 - `/` (alias `/watch`) — Pulse Watch, the product UI
@@ -269,9 +273,9 @@ which thresholds are in force.
 **calibrate the USB rig on your own calm:**
 
 ```bash
-python3 -m anomaly.device_check                # get a steady GOOD TO RECORD first
-python3 -m anomaly.device_calibrate            # 5 min of calm, sit still
-python3 -m anomaly.serve --source device       # now flags against your baseline
+python -m anomaly.device_check                # get a steady GOOD TO RECORD first
+python -m anomaly.device_calibrate            # 5 min of calm, sit still
+python -m anomaly.serve --source device       # now flags against your baseline
 ```
 
 writes `anomaly/saved/scorer_device.npz` and leaves `scorer.npz` alone, so the
@@ -287,8 +291,8 @@ personal biometric data).
 **check the hardware before blaming the model:**
 
 ```bash
-python3 -m anomaly.device_source --list-ports
-python3 -m anomaly.device_source            # live self-test, no TensorFlow
+python -m anomaly.device_source --list-ports
+python -m anomaly.device_source            # live self-test, no TensorFlow
 ```
 
 ---
@@ -300,8 +304,8 @@ one SQLite file, `data/pulse.db`, holding subjects, baselines (including the
 values. gitignored — it is personal biometric data.
 
 ```bash
-python3 -m anomaly.db                         # row counts + every subject's baseline
-python3 -m anomaly.db --backup pulse.bak.db   # consistent snapshot, safe while running
+python -m anomaly.db                         # row counts + every subject's baseline
+python -m anomaly.db --backup pulse.bak.db   # consistent snapshot, safe while running
 ```
 
 **use `--backup` to move subjects between machines.** copying `pulse.db` on its
@@ -322,10 +326,10 @@ them.
 ### evaluate (needs WESAD)
 
 ```bash
-python3 -m anomaly.run --model baseline   # statistical floor (~0.64 PR-AUC)
-python3 -m anomaly.run --model ae         # autoencoder, O1 (~0.67)
-python3 -m anomaly.run --model ssl        # self-supervised, O2 (~0.68)
-python3 -m anomaly.wesad                  # window counts per condition
+python -m anomaly.run --model baseline   # statistical floor (~0.64 PR-AUC)
+python -m anomaly.run --model ae         # autoencoder, O1 (~0.67)
+python -m anomaly.run --model ssl        # self-supervised, O2 (~0.68)
+python -m anomaly.wesad                  # window counts per condition
 ```
 
 leave-one-subject-out, subject-wise splits. numbers also in
@@ -335,9 +339,9 @@ leave-one-subject-out, subject-wise splits. numbers also in
 model-improvement levers, `--model ae` only:
 
 ```bash
-python3 -m anomaly.run --model ae --bottleneck 256              # real latent
-python3 -m anomaly.run --model ae --bottleneck 256 --ch-cap 32  # ESP32-sized  <- DEPLOYED
-python3 -m anomaly.run --model ae --bottleneck 256 --ch-cap 32 --denoise 0.15
+python -m anomaly.run --model ae --bottleneck 256              # real latent
+python -m anomaly.run --model ae --bottleneck 256 --ch-cap 32  # ESP32-sized  <- DEPLOYED
+python -m anomaly.run --model ae --bottleneck 256 --ch-cap 32 --denoise 0.15
 ```
 
 deployed config = LOSO **PR-AUC 0.706 / recall@90spec 0.545**.
@@ -345,8 +349,8 @@ deployed config = LOSO **PR-AUC 0.706 / recall@90spec 0.545**.
 ### ship a new model
 
 ```bash
-python3 -m anomaly.export --bottleneck 256 --ch-cap 32   # train + save ae.keras
-python3 -m anomaly.compress                              # -> ae_int8.tflite + int8 scorer
+python -m anomaly.export --bottleneck 256 --ch-cap 32   # train + save ae.keras
+python -m anomaly.compress                              # -> ae_int8.tflite + int8 scorer
 ```
 
 **always run `compress` after `export`** — it rewrites `scorer.npz` on the int8
@@ -362,8 +366,8 @@ only needed if the model or the clip changes — the baked clip travels inside
 WESAD to run the demo.
 
 ```bash
-python3 -m anomaly.make_demo_clip              # -> pulse/Pulse Watch.dc.html
-python3 -m anomaly.make_demo_clip --dry-run    # report the size, write nothing
+python -m anomaly.make_demo_clip              # -> pulse/Pulse Watch.dc.html
+python -m anomaly.make_demo_clip --dry-run    # report the size, write nothing
 ```
 
 then re-run `make_web_assets.py` and reflash.
@@ -371,8 +375,8 @@ then re-run `make_web_assets.py` and reflash.
 ### the rest
 
 ```bash
-python3 -m anomaly.calibrate      # per-user calibration on WESAD (O6 method)
-python3 -m anomaly.make_plots     # result figures
+python -m anomaly.calibrate      # per-user calibration on WESAD (O6 method)
+python -m anomaly.make_plots     # result figures
 ```
 
 ---
@@ -395,8 +399,11 @@ minutes; far too slow for falls.
 
 ## 6. troubleshooting
 
-**`ModuleNotFoundError: tensorflow` (or `fastapi`) right after a clean install**
-you ran a bare `python3`, not the venv. see setup.
+**`ModuleNotFoundError` for scipy / tensorflow / fastapi, right after a clean install**
+you ran a bare `python3`, which is the system interpreter, not the venv — the
+install went to the venv and the run did not. activate (top of this file), or
+use `~/.venvs/sdp07/bin/python`. check which one you have with `which python`
+(`Get-Command python` on Windows); it should sit under `.venvs/sdp07`.
 
 **the sketch will not compile: `web_assets.h` not found**
 it is gitignored. run `python3 sketch_aug3a/make_web_assets.py`.
@@ -464,12 +471,12 @@ reference point and the streaming pattern the current dashboards were built
 from. **do not point a demo at them.**
 
 ```bash
-python3 pipeline/server.py               # old cardiac dashboard -> :8000
-python3 pipeline/run_cli.py --once       # terminal-only, one 92 s pass
-python3 baselines/train.py --preset phase_a     # supervised 3-class, ~12 min CPU
-python3 baselines/quantize.py --preset phase_a  # -> model_int8.tflite
-python3 baselines/inference_demo.py             # "Overall: 28/30 correct (93%)"
-python3 baselines/make_plots.py
+python pipeline/server.py               # old cardiac dashboard -> :8000
+python pipeline/run_cli.py --once       # terminal-only, one 92 s pass
+python baselines/train.py --preset phase_a     # supervised 3-class, ~12 min CPU
+python baselines/quantize.py --preset phase_a  # -> model_int8.tflite
+python baselines/inference_demo.py             # "Overall: 28/30 correct (93%)"
+python baselines/make_plots.py
 ```
 
 `anomaly.master` sits in the same category for a different reason: it scores one
@@ -477,7 +484,7 @@ networked board headlessly and pushes the verdict back, which is what `fleet`
 does with discovery, a roster and a store on top.
 
 ```bash
-python3 -m anomaly.master --host 10.49.10.173
+python -m anomaly.master --host 10.49.10.173
 ```
 
 ---
