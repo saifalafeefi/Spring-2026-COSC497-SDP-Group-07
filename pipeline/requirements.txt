@@ -3,3 +3,7 @@
 fastapi>=0.110
 uvicorn[standard]>=0.27
 websockets>=12.0
+
+# real-sensor source: reads the ESP32-S3 + MAX30102 serial stream
+# (anomaly/device_source.py, `anomaly.serve --source device`)
+pyserial>=3.5
