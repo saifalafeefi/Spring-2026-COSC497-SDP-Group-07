@@ -96,6 +96,9 @@
   .tunefoot{color:var(--dim);font-size:11px;margin-top:14px;display:flex;
             align-items:center;gap:10px}
   .tunefoot button{padding:5px 11px;font-size:12px}
+  /* a protocol session in progress */
+  .proto{background:#2a1d33;border:1px solid #4a3560;border-radius:8px;padding:9px 11px;
+         margin-top:13px;font-size:13px;font-variant-numeric:tabular-nums}
 </style>
 
 <header>
@@ -126,7 +129,7 @@
 const $ = i => document.getElementById(i);
 let devices = [], subjects = [], events = {};
 // the API this page was written against; the master reports its own in /api/devices
-const NEEDS_API = 12;
+const NEEDS_API = 13;
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -172,6 +175,7 @@ function buildCard(id){
     <div class="stale js-stale" hidden></div>
     <div class="verdict js-verdict"></div>
     <div class="qual js-qual"></div>
+    <div class="qual js-ond"></div>
     <div class="why js-why"></div>
     <div class="bar"><div class="js-fill"></div></div>
     <div class="vitals">
@@ -192,7 +196,7 @@ function buildCard(id){
              fill:q('fill'), bpm:q('bpm'), spo2:q('spo2'), contact:q('contact'),
              actions:q('actions'), hist:q('hist'), histTitle:q('histtitle'),
              clear:q('clear'),
-             qual:q('qual'), stale:q('stale'),
+             qual:q('qual'), ond:q('ond'), stale:q('stale'),
              renameDev:q('rename-dev'), renameSub:q('rename-sub'),
              delSub:q('del-sub'), subjSig:null};
 
@@ -254,6 +258,12 @@ function updateCard(d){
                 : d.quality != null ? 'signal quality ' + Math.round(d.quality * 100) + '%'
                 : '');
   c.qual.style.color = d.quality_note ? 'var(--warn)' : 'var(--dim)';
+  // the board's own detector, running beside this one: what the device would
+  // say if the master went away. absent on firmware that predates it.
+  const o = d.ond;
+  setText(c.ond, !o ? '' : 'on-device: ' + o.st
+    + (o.l != null ? ' · ' + Math.round(o.l * 100) + '%' + (o.f ? ' FLAG' : '') : '')
+    + (o.st === 'ok' || o.st === 'hold' ? ' · ' + o.ms + ' ms' : ''));
   c.fill.style.width = pct + '%';
   c.fill.style.background = d.flag ? 'var(--bad)' : 'var(--accent)';
   setText(c.bpm, d.bpm == null ? '—' : String(d.bpm));
@@ -292,7 +302,19 @@ function updateCard(d){
                    + ' · calibrate to use ' + d.subject.code + "'s own calm" : ''));
 
   const cal = d.calib;
-  setHTML(c.actions, cal
+  const pr = d.protocol;
+  const mmss = s => s == null ? '--:--'
+    : Math.floor(s/60) + ':' + String(Math.floor(s%60)).padStart(2,'0');
+  setHTML(c.actions, pr
+    ? '<div class="proto"><b>PROTOCOL · ' + esc(pr.phase.toUpperCase()) + '</b> '
+      + (pr.phase === 'settle' ? '' : mmss(pr.remaining_s) + ' left')
+      + ' <span class="smeta">session ' + pr.session_id + ' · phase '
+      + Math.max(1, pr.index + 1) + '/' + pr.phases.length + '</span>'
+      + '<div class="why">' + esc(pr.cue) + '</div></div>'
+      + '<div class="row">'
+      + '<button onclick="proto(\''+d.id+'\',\'next\')">Next phase now</button>'
+      + '<button onclick="protoStop(\''+d.id+'\')">Stop</button></div>'
+    : cal
     ? '<div class="row">'
       + '<button onclick="calib(\''+d.id+'\',\'commit\')"'+(cal.can_commit?'':' disabled')+'>'
       + 'Commit ('+cal.windows+'/'+cal.target+')</button>'
@@ -301,7 +323,13 @@ function updateCard(d){
     : '<div class="row">'
       + '<a href="http://'+d.ip+'/" target="_blank">Open its dashboard ↗</a>'
       + '<button onclick="calib(\''+d.id+'\',\'start\')"'+(d.subject?'':' disabled')+'>'
-      + (b?'Recalibrate':'Calibrate')+'</button></div>');
+      + (b?'Recalibrate':'Calibrate')+'</button>'
+      + '<button onclick="protoStart(\''+d.id+'\')"'+(d.subject?'':' disabled')
+      + ' title="baseline → induction → recovery, 3 min each">Protocol</button></div>'
+      + (d.last_protocol ? '<div class="why">last protocol: session '
+         + d.last_protocol.session_id + ' ' + (d.last_protocol.aborted ? 'aborted' : 'complete')
+         + ' · python -m anomaly.protocol report --session ' + d.last_protocol.session_id
+         + '</div>' : ''));
 
   setText(c.histTitle, 'History' + (d.subject ? ' · '+d.subject.code : ''));
   const ev = events[d.id] || [];
@@ -353,6 +381,23 @@ async function req(url, method, body){
 const post = (url, body) => req(url, 'POST', body);
 
 async function calib(id, action){ await post(`/api/calib/${id}/${action}`); tick(); }
+
+// the induced-stress protocol. the phase marks it writes are the ground truth,
+// so starting one is a deliberate act: say what the task is, and confirm.
+async function protoStart(id){
+  const task = prompt('Induction task (stored with the session):', 'serial subtraction');
+  if(task === null) return;
+  if(!confirm('Start a protocol session?\n\nsettle → baseline 3 min → induction 3 min'
+      + ' → recovery 3 min.\n\nThe clock starts once a clean 60 s window exists.'
+      + ' Or run it from a terminal with a live console:\n    python -m anomaly.protocol run'))
+    return;
+  await post(`/api/protocol/${id}/start`, {task}); tick();
+}
+async function proto(id, action){ await post(`/api/protocol/${id}/${action}`); tick(); }
+async function protoStop(id){
+  if(!confirm('Stop the protocol? What has been recorded is kept, marked aborted.')) return;
+  await post(`/api/protocol/${id}/stop`, {reason: 'stopped from the roster'}); tick();
+}
 
 async function assign(id, subject_id){
   await post(`/api/devices/${id}/assign`, {subject_id: subject_id ? Number(subject_id) : null});

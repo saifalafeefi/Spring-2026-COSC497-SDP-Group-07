@@ -32,6 +32,8 @@ or `fastapi`) means, every time. first-time setup is section 1.
 | `anomaly.device_check` | current | live grip coach — is the finger on properly? |
 | `anomaly.device_source` | current | sensor self-test, no model and no dashboard in the way |
 | `anomaly.device_calibrate` | current, USB only | re-derive thresholds on your own calm, for `serve --source device` |
+| `anomaly.protocol` | **the experiment** | record an induced-stress session on the fleet, then score it |
+| `anomaly.board_export` | build step | fit + export the on-device detector to the firmware |
 | `anomaly.run` | build step | leave-one-subject-out evaluation (O1/O2) |
 | `anomaly.export` + `anomaly.compress` | build step | train and ship a new model. always both, in that order |
 | `anomaly.make_demo_clip` | build step | rebake the WESAD demo clip into Pulse Watch |
@@ -212,6 +214,9 @@ stdlib only (`gzip`, `os`, `sys`), so this one really does run on a bare
 
 **flash it.** needs two Arduino libraries, both by **ESP32Async** (older forks
 do not build against ESP32 core 3.x): **ESP Async WebServer** and **Async TCP**.
+set **Tools → PSRAM → OPI PSRAM** (the N16R8's 8 MB) — the on-device detector
+lives there. without it the board still does everything else and reports
+`self=off` (§2.6).
 
 ```
 http://<board-ip>/          Pulse Watch
@@ -225,6 +230,7 @@ http://<board-ip>/health    plain text diagnostics -- try this FIRST
 - `ticks` should rise by hundreds between polls, not by one
 - `skip` = frames dropped for websocket backpressure (a weak link)
 - `rec` = times the sensor was re-initialised after stalling
+- `det dsc dlv dms dhold ddrop self psram` = the on-device detector (§2.6)
 
 ### 2.3 demo data, when there is no hardware
 
@@ -296,6 +302,87 @@ python -m anomaly.device_source            # live self-test, no TensorFlow
 ```
 
 ---
+
+### 2.5 induced-stress protocol sessions
+
+the experiment the whole method rests on: does the flag respond to stress, not
+just to a knocked sensor? runs on the fleet, so start the master first and
+assign the subject on the roster.
+
+```bash
+python -m anomaly.fleet                                   # terminal 1
+python -m anomaly.protocol run                            # terminal 2: live console
+python -m anomaly.protocol run --device pulse-a4f2c1 --task "1022 - 13"
+```
+
+settle (until a clean 60 s window exists) → baseline 3 min → induction 3 min →
+recovery 3 min. the console prints what to do at each phase; ctrl+c stops it
+and keeps what was recorded, marked aborted. the roster card has the same
+controls (**Protocol**, then **Next phase now** / **Stop**).
+
+- phase marks are written at their scheduled time, and they are the label
+- change durations with `--baseline / --induction / --recovery <seconds>`
+- the live calm reference is pinned to the baseline phase during the run;
+  `--no-freeze` tests the flag exactly as it runs day to day
+- `--no-raw` skips saving the waveform; per-second scores are always saved
+- `python -m anomaly.protocol next` / `stop` from another terminal, if needed
+
+score it:
+
+```bash
+python -m anomaly.protocol list
+python -m anomaly.protocol report                         # every session, pooled
+python -m anomaly.protocol report --session 12 --plot     # one, with a figure
+```
+
+pre-committed reading, per session: **HR control check** (induction median
+minus baseline ≥ +10 bpm, or the task did not take and the session proves
+nothing), **AUROC** of raw window scores baseline vs induction (≥ 0.70 =
+responds), **recall@90spec** against the session's own baseline p90, and time
+to first live flag. only windows lying entirely inside a phase count. verdicts:
+`RESPONDS`, `HR ONLY` (the domain-transfer finding — report it),
+`NO INDUCTION`, `UNSCOREABLE`.
+
+files land in `data/protocols/session_<id>.npz` (+ `.png`), gitignored with
+the rest of `data/`.
+
+### 2.6 the on-device detector
+
+the board scores itself once a second: the same movement gate the master uses,
+10 pulse features, Mahalanobis distance from WESAD calm, and the master's live
+self-referencing scale. the master's verdict still wins while it is fresh (it
+runs the autoencoder); when the master is gone the board's own takes over and
+the panel says **ON-DEVICE**. the raw waveform never has to leave the board.
+
+the cost, on WESAD leave-one-subject-out: PR-AUC **0.635** / recall@90spec
+**0.437** on the board, against the autoencoder's 0.706 / 0.545 on the host.
+the board's verdict rides along in every frame (`ond`), so a protocol session
+(§2.5) reports both side by side — the same gap, measured on our hardware.
+
+at boot it runs baked test windows through the C++ and compares them to the
+Python reference. serial prints `# on-device detector self-test pass …`, and
+`/health` shows:
+
+| field | meaning |
+|---|---|
+| `self` | `pass`, `fail` (detail on serial; it will not issue verdicts), or `off` (no PSRAM) |
+| `det` | `idle` no finger · `warm` filling · `hold` movement · `ok` scoring |
+| `dsc` / `dlv` | raw score / level 0–100 (`-1` = none yet) |
+| `dms` | milliseconds the last tick took, on core 0 |
+| `dhold` | windows refused for movement |
+| `ddrop` | seconds the gate skipped in the last scored window. climbing 1/s = every new second rejected, window back-filled from older ones — why `dsc` can sit frozen |
+
+refit or change it — both files in `sketch_aug3a/` come from here:
+
+```bash
+python -m anomaly.board_export --check 300   # prove the C algorithm vs scipy/quality
+python -m anomaly.board_export               # refit on WESAD calm -> board_model.h
+```
+
+`board_model.h` is generated (the fit, the constants, the self-test vectors) and
+committed so a fresh clone compiles. `board_detector.h` is the algorithm, a
+line-for-line port of the mirror in `board_export.py`: change one, change the
+other, re-run `--check`, reflash, and read `self=`.
 
 ## 3. the store
 

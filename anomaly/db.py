@@ -416,6 +416,21 @@ class Db:
                           WHERE s.device_id=? AND s.ended IS NULL
                           ORDER BY s.started DESC LIMIT 1""", (device_id,))
 
+    def set_session_raw(self, session_id: int, path: str):
+        """where a protocol session's own file is, relative to this store."""
+        self._w("UPDATE session SET raw_path=? WHERE id=?", (path, session_id))
+
+    def append_session_note(self, session_id: int, note: str):
+        self._w("UPDATE session SET notes=COALESCE(notes,'') || ? WHERE id=?",
+                (note, session_id))
+
+    def protocol_sessions(self) -> list:
+        return self.q("""SELECT s.*, sub.code AS subject_code,
+                                (SELECT COUNT(*) FROM protocol_mark m
+                                  WHERE m.session_id = s.id) AS n_marks
+                         FROM session s JOIN subject sub ON sub.id = s.subject_id
+                         WHERE s.kind='protocol' ORDER BY s.started""")
+
     def sessions_for_subject(self, subject_id: int, limit: int = 50) -> list:
         return self.q("""SELECT * FROM session WHERE subject_id=?
                          ORDER BY started DESC LIMIT ?""", (subject_id, limit))

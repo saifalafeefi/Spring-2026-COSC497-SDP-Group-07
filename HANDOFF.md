@@ -201,7 +201,7 @@ transfer delta into a 31-subject controlled measurement. Raw trials are
 continuous 50 Hz IR/RED at ~2 min each, re-windowable to 60 s.
 
 **3. Mahalanobis on the board.** Closes DoD 4 / O7. 520 bytes (median, mu, sd and
-a 10x10 inverse covariance) against the autoencoder's 4.2 MB {DASH} no TFLM, no
+a 10x10 inverse covariance) against the autoencoder's 4.2 MB — no TFLM, no
 arena sizing, no partition changes. The 0.71 -> 0.64 PR-AUC gap IS the "accuracy
 cost" the DoD asks to be reported, and it gives the board a verdict when the
 master is away.

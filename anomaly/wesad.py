@@ -36,6 +36,7 @@ WESAD_DIR = os.path.join(REPO_ROOT, "WESAD")
 
 FS = 64                      # wrist BVP sample rate (Hz)
 FS_ACC = 32                 # wrist accelerometer sample rate (Hz)
+FS_EDA = 4                  # wrist EDA and skin-temperature sample rate (Hz)
 
 # the 15 released subjects (no S1, no S12)
 SUBJECTS = [f"S{i}" for i in range(2, 18) if i not in (1, 12)]
@@ -46,12 +47,16 @@ USABLE = set(COND)          # everything else (0, 5, 6, 7) is transient → drop
 
 
 def load_subject(subject: str, wesad_dir: str | None = None,
-                 with_acc: bool = False) -> dict:
+                 with_acc: bool = False, with_eda: bool = False,
+                 with_temp: bool = False) -> dict:
     """load one subject's wrist BVP and its label track (aligned to 64 Hz).
 
-    returns a dict: subject, fs, bvp (float32, n), labels (int8, n), and — if
-    with_acc — acc (float32, m×3) at FS_ACC. the big chest arrays are read then
-    dropped, so peak memory is one pickle, not the whole dataset.
+    returns a dict: subject, fs, bvp (float32, n), labels (int8, n), and on
+    request the other wrist channels the E4 recorded alongside it: acc (float32,
+    m×3) at FS_ACC, eda (float32, k) and temp (float32, k) at FS_EDA. all four
+    share the pickle's start time, so a window at t seconds is bvp[t*64:],
+    eda[t*4:], acc[t*32:]. the big chest arrays are read then dropped, so peak
+    memory is one pickle, not the whole dataset.
     """
     wesad_dir = wesad_dir or WESAD_DIR
     path = os.path.join(wesad_dir, subject, f"{subject}.pkl")
@@ -65,6 +70,10 @@ def load_subject(subject: str, wesad_dir: str | None = None,
     label700 = np.asarray(d["label"]).reshape(-1)
     acc = (np.asarray(d["signal"]["wrist"]["ACC"]).astype(np.float32)
            if with_acc else None)
+    eda = (np.asarray(d["signal"]["wrist"]["EDA"]).reshape(-1).astype(np.float32)
+           if with_eda else None)
+    temp = (np.asarray(d["signal"]["wrist"]["TEMP"]).reshape(-1).astype(np.float32)
+            if with_temp else None)
     del d   # release the 700 Hz chest arrays asap
 
     # align the 700 Hz label track onto the 64 Hz BVP timeline. both streams
@@ -79,6 +88,12 @@ def load_subject(subject: str, wesad_dir: str | None = None,
     if with_acc:
         out["acc"] = acc
         out["fs_acc"] = FS_ACC
+    if with_eda:
+        out["eda"] = eda
+        out["fs_eda"] = FS_EDA
+    if with_temp:
+        out["temp"] = temp
+        out["fs_temp"] = FS_EDA
     return out
 
 

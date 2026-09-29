@@ -46,6 +46,7 @@ from concurrent.futures import ThreadPoolExecutor
 from . import quality
 from .db import DEFAULT_PATH as DB_PATH, Db, import_legacy_scorers
 from .infer import SAVE_DIR
+from .protocol import DEFAULT_PLAN, ProtocolRun
 from .wesad import FS
 
 WIN = 60 * FS
@@ -63,7 +64,7 @@ HTTP_TIMEOUT = 1.0
 # page against its OLD routes -- the page calls an endpoint that does not exist
 # yet and the browser reports a bare "failed". Bump this whenever a route is
 # added or changed; the page checks it and says plainly that a restart is due.
-API_VERSION = 12
+API_VERSION = 13
 
 # how long a board can go without a finger on it before its session is over.
 # generous on purpose: a session is a stretch of monitoring, and closing one
@@ -391,6 +392,10 @@ class Device:
         self.above = 0                    # consecutive seconds over the line
         self.below = 0                    # and under it, for the hysteresis
         self.flag_hist: deque = deque(maxlen=600)   # was it flagging? last 10 min
+        self.ond = None                   # the board's own detector, from its frames
+        self.protocol = None              # a ProtocolRun while one is running
+        self.last_protocol = None         # how the last one ended, for the console
+        self.freeze_norm = False          # a protocol pins the calm reference to its baseline
         self.refresh()
         self.refresh_threshold()
 
@@ -542,7 +547,11 @@ class Device:
         self.quality = q
         if raw is None:              # window refused; hold, do not guess
             return
-        self.recent.append(float(raw))
+        # during a protocol's induction and recovery the reference stays where
+        # the baseline phase left it; otherwise three minutes of task become the
+        # "calm" the task is measured against. see anomaly/protocol.py.
+        if not self.freeze_norm:
+            self.recent.append(float(raw))
         self.ema = raw if self.ema is None else \
             (1.0 - EMA_ALPHA) * self.ema + EMA_ALPHA * raw
         self.score = self.ema
@@ -684,6 +693,9 @@ class Device:
             "pushes": self.pushes, "fails": self.fails,
             "last_seen": None if stale is None else round(stale, 1),
             "calib": self.calib.status() if self.calib else None,
+            "ond": self.ond,
+            "protocol": self.protocol.status() if self.protocol else None,
+            "last_protocol": self.last_protocol,
         }
 
 
@@ -812,6 +824,11 @@ class Fleet:
             await asyncio.sleep(every)
             now = time.monotonic()
             for dev in list(self.devices.values()):
+                if dev.protocol:
+                    # a protocol keeps its own clock and ends on schedule even if
+                    # the board has gone quiet -- nothing else would end it
+                    dev.protocol.advance_clock()
+                    continue
                 if dev.session_id is None:
                     continue
                 idle = now - (dev.last_contact or 0.0)
@@ -850,9 +867,13 @@ class Fleet:
                         dev.contact = bool(d.get("contact"))
                         dev.bpm = m.get("bpm")
                         dev.spo2 = m.get("spo2")
+                        dev.ond = m.get("ond")        # None from older firmware
                         if m.get("sens") is not None:
                             dev.sens = float(m["sens"])   # the user moved the slider
                         now_c = time.monotonic()
+                        if dev.protocol:
+                            # every frame, contact or not: gaps are part of the record
+                            dev.protocol.feed(m.get("idx"), m.get("bvp"), dev.contact)
                         if dev.contact:
                             dev.last_contact = now_c
                             dev.ensure_session()          # nobody presses start
@@ -898,6 +919,7 @@ class Fleet:
                         # Say something EVERY second, even when the answer is
                         # "not yet". Silence read as calm on the board.
                         wait = 0
+                        sc = None
                         if not dev.contact:
                             # the board is the authority on whether a finger is
                             # there and says so on its own screen; we just keep
@@ -922,6 +944,8 @@ class Fleet:
                                 state = "zero"
 
                         dev.state = state
+                        if dev.protocol:
+                            dev.protocol.tick(sc)
                         # off the loop: a slow board must not stall the others
                         ok = await asyncio.get_running_loop().run_in_executor(
                             NET, push_flag, dev.ip, dev.flag, dev.level or 0.0,
@@ -951,6 +975,8 @@ async def run_calib(dev, action: str):
         # a baseline has to belong to somebody, or it is just a number.
         if dev.subject is None:
             return "assign a subject to this board first"
+        if dev.protocol:
+            return "a protocol session is running on this board -- stop it first"
         dev.calib = CalibSession()
         await asyncio.get_running_loop().run_in_executor(
             NET, push_calib, dev.ip, "record", 0, CalibSession.TARGET, False)
@@ -1048,6 +1074,9 @@ def build_app(fleet: Fleet):
         sub = fleet.db.subject(sid)
         if sub is None:
             return JSONResponse({"error": "unknown subject"}, status_code=404)
+        for d in fleet.devices.values():
+            if d.protocol and d.subject and d.subject["id"] == sid:
+                d.protocol.finish(aborted=True, reason="subject deleted")
         stats = fleet.db.subject_stats(sid)
         fleet.db.delete_subject(sid)
         # any board they were on is now unattributed, and its in-flight score is
@@ -1093,6 +1122,10 @@ def build_app(fleet: Fleet):
         dev = fleet.devices.get(dev_id)
         if dev is None:
             return JSONResponse({"error": "unknown device"}, status_code=404)
+        if dev.protocol:
+            return JSONResponse({"error": "a protocol session is running on this board "
+                                          "-- stop it before changing the wearer"},
+                                status_code=400)
         sid = body.get("subject_id")
         fleet.db.assign_subject(dev_id, sid)
         # the open session ended with the old wearer; drop the in-flight state too,
@@ -1153,6 +1186,44 @@ def build_app(fleet: Fleet):
         if err:
             return JSONResponse({"error": err}, status_code=400)
         return {"ok": True, "sens": dev.sens}
+
+    # ---- induced-stress protocol sessions (anomaly/protocol.py) ----
+
+    @app.post("/api/protocol/{dev_id}/{action}")
+    async def protocol(dev_id: str, action: str, body: dict = Body(default={})):
+        dev = fleet.devices.get(dev_id)
+        if dev is None:
+            return JSONResponse({"error": "unknown device"}, status_code=404)
+        if action == "start":
+            if dev.protocol:
+                return JSONResponse({"error": "a protocol is already running on this board"},
+                                    status_code=400)
+            if dev.calib:
+                return JSONResponse({"error": "a calibration is running -- commit or "
+                                              "cancel it first"}, status_code=400)
+            plan = body.get("plan") or {}
+            try:
+                run = ProtocolRun(dev, plan=[(p, float(plan.get(p, s))) for p, s in DEFAULT_PLAN],
+                                  task=body.get("task") or "", notes=body.get("notes") or "",
+                                  freeze=bool(body.get("freeze", True)),
+                                  record_raw=bool(body.get("record_raw", True)))
+                sid = run.start()
+            except (TypeError, ValueError) as e:
+                return JSONResponse({"error": str(e)}, status_code=400)
+            return {"ok": True, "session_id": sid, "protocol": run.status()}
+        if action in ("next", "stop"):
+            if not dev.protocol:
+                return JSONResponse({"error": "no protocol running on this board"},
+                                    status_code=400)
+            if action == "next":
+                dev.protocol.next_phase()
+            else:
+                dev.protocol.finish(aborted=True,
+                                    reason=body.get("reason") or "stopped by the operator")
+            return {"ok": True,
+                    "protocol": dev.protocol.status() if dev.protocol else None,
+                    "last": dev.last_protocol}
+        return JSONResponse({"error": "unknown action"}, status_code=400)
 
     return app
 

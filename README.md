@@ -42,8 +42,8 @@ HR·SpO₂·accel   filter·resample   artifact reject   extract/embed   autoenc
 
 signal-quality assessment is a first-class stage, not an afterthought — it is
 implemented for the live sensor (`device_source.py` filters, `device_check.py` gates).
-the edge target is a **Raspberry Pi** (the guaranteed "runs on device" deliverable);
-ESP32-S3 TinyML is the stretch, though the ESP32-S3 is what currently streams live.
+the edge target was planned as a **Raspberry Pi**; what got built is an **ESP32-S3**,
+which now streams, scores and alerts on its own.
 
 ## status
 
@@ -76,19 +76,26 @@ subject, calm only.
 
 **the board now hosts the dashboard itself.** the ESP32 joins WiFi, serves the
 whole UI from flash (232 KB of pages, 68 KB gzipped), conditions its own signal
-to 64 Hz in C, and streams it over a websocket {DASH} so a browser talks only to
-the device. the PC becomes an optional headless scorer (`anomaly/master.py`):
-it reads that stream, runs the autoencoder, and pushes the verdict back to the
-board's `/flag`, which drives both the TFT and every browser watching. when the
-PC goes away the board reports `--` rather than leaving a stale verdict on
-screen. **the model is still on the PC, not the board** {DASH} that satisfies O4
-but leaves DoD item 4 / O7 open, and the 520-byte Mahalanobis baseline
-(`anomaly/baseline.py`, 0.64 PR-AUC against the autoencoder's 0.71) is the
-intended on-device fallback.
+to 64 Hz in C, and streams it over a websocket — so a browser talks only to
+the device. the PC is an optional scorer (`anomaly/fleet.py`): it reads that
+stream, runs the autoencoder, and pushes the verdict back to the board's
+`/flag`, which drives both the TFT and every browser watching.
+
+**the board runs its own detector.** the Mahalanobis baseline, the movement gate
+and the live scale are ported to C++ (`sketch_aug3a/board_detector.h`, fitted and
+exported by `anomaly/board_export.py`) and score the stream once a second on the
+board — the full sensor → detect → alert loop with no PC at all, and the raw
+waveform never leaves the device. when the PC is there its autoencoder wins; when
+it goes away the board's own verdict takes over, marked ON-DEVICE. the cost is
+measured, not guessed: **0.635 PR-AUC on the board vs 0.706 for the autoencoder**
+(WESAD LOSO). at boot the board checks its C++ against the Python reference
+(`/health` → `self=pass`); on the rig it takes ~210 ms a second on core 0 and
+leaves the sensor loop untouched.
 
 **not yet shown:** that the flag *rises under stress* on this hardware. everything
-above establishes what calm looks like. the induced-proxy test is the next step and
-the thing that would validate or sink the transfer claim.
+above establishes what calm looks like. `anomaly/protocol.py` records the test —
+baseline → mental arithmetic → recovery, phase marks as ground truth — and scores
+the host and on-device detectors side by side; it has not been run on a subject yet.
 
 | Document | What it covers |
 |---|---|
@@ -107,7 +114,7 @@ tick as we go. `[x]` = done.
 - [x] board joins WiFi (credentials in gitignored `secrets.h` or over USB) and serves the dashboard from flash
 - [x] signal conditioning (resample + band-pass) ported to C, verified against the Python to 1.7e-9
 - [x] TFT shows CALM / STRESSED / no-finger instead of a waveform
-- [ ] run a model on the board itself (DoD 4 / O7) — Mahalanobis baseline is the cheap path
+- [x] run a model on the board itself (DoD 4 / O7) — Mahalanobis + movement gate in C++, self-tested at boot against the Python reference
 - [ ] assemble the Pi sensor rig (MAX30102 + accelerometer)
 - [ ] validate: resting HR within ±5 bpm of **a reference oximeter**, 5-min recording, ≥3 people
 - [ ] accelerometer logging working (no accelerometer on the rig yet)
@@ -125,6 +132,8 @@ tick as we go. `[x]` = done.
 - [x] tunable-sensitivity control: slider + watch preset → server retunes the flag threshold (O4, with S4)
 - [x] device calibration: record our own calm on the real sensor, re-derive the flag threshold, apply it live (CLI + dashboard button)
 - [x] transfer delta measured on our own hardware (see status) — O6 is no longer WESAD-only
+- [x] protocol recorder for induced-stress sessions: phase marks, pre-committed report (ΔHR, AUROC, recall@90spec), host vs on-device
+- [x] export the on-device detector to the board, with a Python mirror that proves the C port
 - [ ] show the flag responds to induced stress on this rig (calm-only so far)
 - [ ] (optional) exertion model on PPG-DaLiA
 
@@ -163,7 +172,7 @@ built on the device path already (`anomaly/device_source.py`, `anomaly/device_ch
 
 **milestones**
 - [ ] M1 — method beats baseline ✅ · rig streaming live ✅ · rig validated against a reference ❌
-- [ ] M2 — full demo running on the device
+- [x] M2 — full sensor → detect → alert loop running on the device (on-device detector; the PC's autoencoder takes over when present)
 
 ## quick start
 
@@ -188,6 +197,10 @@ python3 -m anomaly.serve --source device  # then hit Calibrate in the UI to set 
 # or let the BOARDS host their dashboards over WiFi and score them all from here
 python3 -m anomaly.device_wifi --ssid MyNetwork   # once; or hard-code sketch_aug3a/secrets.h
 python3 -m anomaly.fleet                          # finds every board -> http://localhost:8002
+python3 -m anomaly.protocol run                   # an induced-stress session, then: report --plot
+
+# refit the on-device detector (writes sketch_aug3a/board_model.h; flash with PSRAM = OPI)
+python3 -m anomaly.board_export --check 300 && python3 -m anomaly.board_export
 
 # evaluate the detectors on WESAD (needs WESAD downloaded; leave-one-subject-out)
 python3 -m anomaly.run --model ae --bottleneck 256 --ch-cap 32   # baseline | ae | ssl
