@@ -91,7 +91,10 @@ def _run(script: str, timeout: float = 40.0) -> dict:
     try:
         r = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive",
                             "-ExecutionPolicy", "Bypass", "-EncodedCommand", enc],
-                           capture_output=True, text=True, timeout=timeout)
+                           capture_output=True, text=True, timeout=timeout,
+                           # no console flashing up when a windowed app (the
+                           # control panel) asks for the hotspot's state
+                           creationflags=0x08000000)    # CREATE_NO_WINDOW
     except FileNotFoundError:
         raise HotspotError("powershell.exe not found")
     except subprocess.TimeoutExpired:

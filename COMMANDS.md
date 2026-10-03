@@ -49,6 +49,16 @@ or `fastapi`) means, every time. first-time setup is section 1.
 everything under **prior work** is kept as a reference point and is *not* the
 current direction — see the pivot table in the project brief.
 
+**or skip the commands entirely: Pulse Control.** a window with a button for
+everything below — connect a board to the hotspot, start the master, run a
+stress session, the WESAD demo, reports, firmware build steps — and a log of
+what each one is doing. double-click `launcher\build_exe.bat` once to build
+`Pulse Control.exe` into the project folder (needs the venv from section 1),
+then double-click the exe. it runs the real code with your venv, so a `git pull`
+never needs a rebuild; rebuild only if `launcher/pulse_control.py` changes. the
+exe is gitignored — everyone builds their own. no Windows? `python
+launcher/pulse_control.py`.
+
 **if you remember nothing else:**
 
 ```bash
@@ -206,8 +216,32 @@ two Windows habits to know:
   internet in the room = no hotspot; keep a phone hotspot as the fallback and
   point the board at it with `--ssid`
 
+**a board remembers up to 5 networks**, most recently used first, and tries
+them in turn (15 s each) until one answers — so one board moves between this
+PC's hotspot, a phone's hotspot and a router by itself. add one over WiFi from
+Pulse Control (Board setup → Add a WiFi network), or over USB:
+
+```bash
+python -m anomaly.device_wifi --ssid "Saif iPhone" --save   # remember it for later
+python -m anomaly.device_wifi --ssid "Saif iPhone"          # join it now
+python -m anomaly.device_wifi --forget --ssid "Old Network" # forget one
+python -m anomaly.device_wifi --status                      # on now + saved list
+```
+
+**join now has a safety net:** if the board hasn't joined within 25 s (wrong
+password, out of range) it goes back to the network it came from, and the new
+one drops to the end of the list. over WiFi: `GET /wifi` lists the saved
+networks (names only, never passwords); `POST /wifi` with `action=save|now|forget`
+changes them. plain HTTP on the LAN — fine for a lab, not a product.
+
+**laptop + board both on a phone's hotspot:** give the board the phone's
+network (save or join now), put the laptop on the same hotspot, then start the
+master in shared mode — Pulse Control: Live → "the same WiFi as this PC", or
+plain `python -m anomaly.fleet` (no `--hotspot`). it scans every network the
+laptop is on and finds the board's new address by itself.
+
 the other two ways; anything stored on the board wins over the header, since
-NVS survives a reflash.
+NVS survives a reflash. (secrets.h is the last entry in the list, never stored.)
 
 hard-coded: copy `sketch_aug3a/secrets.example.h` to
 `sketch_aug3a/secrets.h` (gitignored) and fill in `WIFI_SSID` / `WIFI_PASS`.
@@ -259,6 +293,8 @@ http://<board-ip>/health    plain text diagnostics -- try this FIRST
 - `skip` = frames dropped for websocket backpressure (a weak link)
 - `rec` = times the sensor was re-initialised after stalling
 - `det dsc dlv dms dhold ddrop self psram` = the on-device detector (§2.6)
+
+the wearer's name shows top-right on the board's screen, and survives a reboot.
 
 ### 2.3 demo data, when there is no hardware
 

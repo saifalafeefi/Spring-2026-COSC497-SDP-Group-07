@@ -59,3 +59,6 @@ sketch_aug3a/web_assets.h
 
 # --- the master's store: subject data, never committed ---
 /data
+
+# the control panel exe -- built locally by launcher/build_exe.bat, never committed
+/Pulse Control.exe

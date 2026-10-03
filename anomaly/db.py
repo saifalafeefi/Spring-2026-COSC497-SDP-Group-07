@@ -35,7 +35,7 @@ import time
 DEFAULT_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "pulse.db")
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 8
 
 KINDS = ("calibration", "monitor", "protocol")
 PHASES = ("baseline", "induction", "recovery")
@@ -233,6 +233,14 @@ class Db:
             if v == 5:
                 self.con.execute("ALTER TABLE baseline ADD COLUMN k_sigma REAL")
                 v = 6
+            if v == 6:
+                # v7 only ever added a `checkin` table, for a feature that was
+                # scrapped before it shipped. nothing to do for a v6 store.
+                v = 7
+            if v == 7:
+                # v8: drop that table from any store an unreleased build migrated
+                self.con.execute("DROP TABLE IF EXISTS checkin")
+                v = 8
             self.con.execute("PRAGMA user_version=%d" % v)
             self.con.commit()
 

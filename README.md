@@ -182,6 +182,10 @@ interpreter pip simply fails to resolve tensorflow. keep the venv outside the re
 and outside any synced folder (iCloud/OneDrive). full setup in
 [`COMMANDS.md`](COMMANDS.md).
 
+**no commands needed:** after the install below, double-click
+`launcher\build_exe.bat` once, then use `Pulse Control.exe` — a button for every
+step (board → hotspot, master, stress sessions, demo, reports).
+
 ```bash
 # install dependencies (one-time)
 python3.12 -m venv ~/.venvs/sdp07

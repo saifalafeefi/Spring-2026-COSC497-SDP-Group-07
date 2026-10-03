@@ -57,9 +57,13 @@ def main() -> int:
     ap.add_argument("--hotspot", action="store_true",
                     help="join this PC's Windows Mobile Hotspot -- no password needed")
     ap.add_argument("--ssid")
-    ap.add_argument("--password", help="omit to be prompted without echoing")
-    ap.add_argument("--status", action="store_true", help="report SSID and IP")
-    ap.add_argument("--forget", action="store_true", help="clear the stored network")
+    ap.add_argument("--password", help="omit to be prompted without echoing "
+                                       "(or set PULSE_WIFI_PASS, as the control panel does)")
+    ap.add_argument("--save", action="store_true",
+                    help="with --ssid: remember it for later instead of joining it now")
+    ap.add_argument("--status", action="store_true", help="report SSID, IP and saved networks")
+    ap.add_argument("--forget", action="store_true",
+                    help="forget every saved network, or just --ssid's")
     ap.add_argument("--port", default=os.environ.get("DEVICE_PORT"))
     ap.add_argument("--baud", type=int, default=DEFAULT_BAUD)
     args = ap.parse_args()
@@ -67,7 +71,9 @@ def main() -> int:
     if not (args.status or args.forget or args.ssid or args.hotspot):
         ap.error("give --hotspot, --ssid, --status or --forget")
 
-    pw = args.password
+    # an env var keeps the password off the command line, where any process
+    # listing would show it
+    pw = args.password if args.password is not None else os.environ.get("PULSE_WIFI_PASS")
     if args.hotspot:
         # BEFORE opening the port: opening it resets the board, and it should
         # come back up with the hotspot already there to join
@@ -94,8 +100,14 @@ def main() -> int:
             ser.write(b"W?\n")
             _drain(ser, 3.0, want="ssid=")
         elif args.forget:
-            ser.write(b"W!\n")
-            _drain(ser, 3.0, want="forgotten")
+            _drain(ser, 15.0, want="setup done")
+            ser.reset_input_buffer()
+            if args.ssid:
+                ser.write(f"F,{args.ssid}\n".encode("utf-8"))
+                _drain(ser, 5.0, want="wifi forgot")
+            else:
+                ser.write(b"W!\n")
+                _drain(ser, 5.0, want="forgotten")
         else:
             if pw is None:
                 pw = getpass.getpass("  password (not echoed): ")
@@ -111,18 +123,28 @@ def main() -> int:
             _drain(ser, 15.0, want="setup done")
             ser.reset_input_buffer()
 
-            ser.write(f"W,{args.ssid},{pw}\n".encode("ascii"))
+            # W joins now; N only remembers it for when nothing earlier answers
+            ser.write(f"{'N' if args.save else 'W'},{args.ssid},{pw}\n".encode("utf-8"))
             print(f"  sent credentials for {args.ssid!r}")
             if not _drain(ser, 5.0, want="wifi saved"):
                 print("\n  the board did not acknowledge the command. is the")
                 print("  dashboard still running and holding the port?")
                 return 1
+            if args.save:
+                print(f"\n  saved. the board tries {args.ssid!r} whenever its current")
+                print("  network is out of reach.")
+                return 0
 
+            # a failed join now goes BACK to the old network after 25 s and says
+            # "wifi connected" for that one -- so success means connected to the
+            # network that was asked for, not just connected
             print("  connecting…")
-            log = _drain(ser, 25.0, want="wifi connected")
-            if not any("wifi connected" in l for l in log):
-                print("\n  no IP. check the SSID and password, and that the network")
+            want = f"wifi connected ssid={args.ssid} "
+            log = _drain(ser, 35.0, want=want)
+            if not any(want in l for l in log):
+                print("\n  it did not join. check the SSID and password, and that the network")
                 print("  is 2.4 GHz -- the ESP32 cannot join a 5 GHz-only SSID.")
+                print("  (it goes back to its previous network by itself.)")
                 if args.hotspot:
                     print("  also: the board must be in range of THIS PC, and the")
                     print("  hotspot caps clients (python -m anomaly.hotspot).")

@@ -208,6 +208,11 @@ char hostState[6] = "none";
 // master has to say it. Pushed with every verdict, which means a board that
 // reboots picks the name back up within a second rather than staying wrong.
 char hostSubject[28] = "";
+// The wearer's name is also painted top-right on the TFT. The web task only
+// marks it changed; the main loop paints it (the TFT is not thread-safe) and
+// keeps a copy in NVS, so a board that reboots with no master in reach still
+// says whose it is.
+volatile bool wearerDirty = true;
 int32_t hostWait = 0;                 // seconds of warm-up left
 int32_t shownWait = -1;               // last warm-up number painted
 int32_t shownFlag = -2;               // what is currently painted, to avoid redraws
@@ -258,11 +263,27 @@ float hostSens = 0.5f;          // 0..1 from the slider
 // board just draws what it is told. Guessing here drew 52% while the master
 // flagged at 28%.
 float hostThrLevel = 0.42f;     // until the master's first push arrives
-String wifiSsid;
-String wifiPass;
-bool wifiWanted = false;         // credentials exist, so keep trying
+// ---- WiFi: a short list of known networks (see the WiFi section) ----
+#define WIFI_MAX_KNOWN 5
+#define WIFI_TRY_MS    15000         // per network, before moving on to the next
+#define WIFI_SWITCH_MS 25000         // a "join now" not joined by then is undone
+String knownSsid[WIFI_MAX_KNOWN];
+String knownPass[WIFI_MAX_KNOWN];
+int knownCount = 0;
+bool knownFromHeader = false;        // the last entry is secrets.h's, never stored
+int wifiTry = 0;                     // which known network is being tried
+uint32_t wifiTryMs = 0;
 wl_status_t wifiLast = WL_NO_SHIELD;
-uint32_t wifiRetryMs = 0;
+SemaphoreHandle_t wifiLock = NULL;   // the list, between the loop and the web task
+// one queue for every change, filled by the web handler or serial and drained
+// by wifiPoll() on the main loop -- the web task must not touch NVS or the list
+volatile int8_t wifiPend = 0;        // 0 none, 1 save, 2 join now, 3 forget, 4 forget all
+char wifiPendSsid[33];
+char wifiPendPass[64];
+String wifiSwitchTo;                 // the network a "join now" is trying
+String wifiSwitchBack;               // and the one it came from
+uint32_t wifiSwitchMs = 0;           // 0 = no switch in progress
+char wifiLastResult[96] = "";        // how the last switch went
 
 
 // =====================================================
@@ -739,6 +760,7 @@ Verdict verdictNow() {
 // Repaints only when the verdict changes, so the screen is not cleared 40x a
 // second (which is what made the old waveform panel flicker).
 void drawStatus() {
+  wearerPoll();                  // cheap unless the name changed
   Verdict v = verdictNow();
   bool fresh = v.fresh;
   bool finger = (irDcDisplay > 50000);
@@ -1222,8 +1244,12 @@ void webBegin() {
       hostState[sizeof(hostState) - 1] = 0;
     }
     if (req->hasParam("n")) {
-      strncpy(hostSubject, req->getParam("n")->value().c_str(), sizeof(hostSubject) - 1);
-      hostSubject[sizeof(hostSubject) - 1] = 0;
+      const char *nm = req->getParam("n")->value().c_str();
+      if (strncmp(nm, hostSubject, sizeof(hostSubject) - 1) != 0) {
+        strncpy(hostSubject, nm, sizeof(hostSubject) - 1);
+        hostSubject[sizeof(hostSubject) - 1] = 0;
+        wearerDirty = true;            // repainted by the main loop, not here
+      }
     }
     hostWait = req->hasParam("w") ? req->getParam("w")->value().toInt() : 0;
     if (req->hasParam("b")) {         // heart rate, the WiFi counterpart of "H,"
@@ -1260,6 +1286,66 @@ void webBegin() {
              phase, w, t, (float)w / (float)t, c ? "true" : "false");
     ws.textAll(msg);
     req->send(200, "text/plain", "ok");
+  });
+
+  // Known networks: names only, never passwords.
+  server.on("/wifi", HTTP_GET, [](AsyncWebServerRequest *req) {
+    String j;
+    j.reserve(512);
+    j = "{\"connected\":";
+    j += (WiFi.status() == WL_CONNECTED) ? "true" : "false";
+    j += ",\"ssid\":\"" + jsonEsc(WiFi.SSID()) + "\"";
+    j += ",\"ip\":\"" + WiFi.localIP().toString() + "\"";
+    j += ",\"rssi\":" + String(WiFi.RSSI());
+    j += ",\"known\":[";
+    if (wifiLock && xSemaphoreTake(wifiLock, pdMS_TO_TICKS(200)) == pdTRUE) {
+      for (int i = 0; i < knownCount; i++) {
+        if (i) j += ",";
+        j += "{\"ssid\":\"" + jsonEsc(knownSsid[i]) + "\",\"from_secrets\":";
+        j += (knownFromHeader && i == knownCount - 1) ? "true}" : "false}";
+      }
+      j += "],\"switching\":";
+      j += (wifiSwitchMs != 0) ? "true" : "false";
+      j += ",\"switch_to\":\"" + jsonEsc(wifiSwitchTo) + "\"";
+      j += ",\"last\":\"" + jsonEsc(String(wifiLastResult)) + "\"";
+      xSemaphoreGive(wifiLock);
+    } else {
+      j += "],\"switching\":false,\"busy\":true";
+    }
+    j += "}";
+    req->send(200, "application/json", j);
+  });
+
+  // Add, switch to, or forget a network, from the control panel over WiFi.
+  //   POST /wifi  action=save|now|forget  ssid=...  pass=...
+  // Applied on the main loop (wifiPoll), not here: this runs on the web task.
+  // A plain-HTTP prototype on the LAN: anyone on the same network could send
+  // this. Fine for a lab demo; a product would authenticate it.
+  server.on("/wifi", HTTP_POST, [](AsyncWebServerRequest *req) {
+    String action = req->hasParam("action", true) ? req->getParam("action", true)->value() : String("");
+    String ssid = req->hasParam("ssid", true) ? req->getParam("ssid", true)->value() : String("");
+    String pass = req->hasParam("pass", true) ? req->getParam("pass", true)->value() : String("");
+    int8_t act = (action == "save") ? 1 : (action == "now") ? 2 : (action == "forget") ? 3 : 0;
+    if (act == 0) {
+      req->send(400, "application/json", "{\"ok\":false,\"error\":\"action must be save, now or forget\"}");
+      return;
+    }
+    if (ssid.length() < 1 || ssid.length() > 32) {
+      req->send(400, "application/json", "{\"ok\":false,\"error\":\"the network name must be 1-32 characters\"}");
+      return;
+    }
+    if (act != 3 && pass.length() != 0 && (pass.length() < 8 || pass.length() > 63)) {
+      req->send(400, "application/json",
+                "{\"ok\":false,\"error\":\"a WiFi password is 8-63 characters (empty for an open network)\"}");
+      return;
+    }
+    if (!wifiRequest(act, ssid.c_str(), pass.c_str())) {
+      req->send(409, "application/json", "{\"ok\":false,\"error\":\"busy - try again in a few seconds\"}");
+      return;
+    }
+    req->send(200, "application/json", act == 2
+              ? "{\"ok\":true,\"action\":\"now\",\"note\":\"switching; if it cannot join within 25 s it comes back\"}"
+              : "{\"ok\":true}");
   });
 
   // A plain-text health check, so a failure can be told apart from a hung page.
@@ -1474,6 +1560,20 @@ void wsTick() {
 // =====================================================
 // WiFi
 // =====================================================
+// The board remembers up to WIFI_MAX_KNOWN networks in NVS (so they survive a
+// reflash), most recently used first, and tries them in turn, WIFI_TRY_MS
+// each, until one answers. That is what lets one board move between the PC's
+// hotspot, a phone's hotspot and a router with nobody re-typing anything.
+// secrets.h, if filled in, is one more candidate at the end of the list.
+//
+// Changes arrive over the web (POST /wifi, from the control panel) or serial,
+// and all go through wifiPend so they are applied here, on the main loop:
+//   save     remember it, try it when nothing earlier in the list answers
+//   join now leave the current network for it -- with a safety net: if it has
+//            not joined within WIFI_SWITCH_MS the board goes back where it was,
+//            because one typo in a password would otherwise strand a board
+//            nobody can reach any more
+//   forget   drop one, or all
 void wifiShowStatus() {
   // The header line doubles as the address bar: once connected it shows the IP
   // to type into a browser, which is the only thing the user actually needs.
@@ -1483,23 +1583,181 @@ void wifiShowStatus() {
   tft.setCursor(10, 8);
   if (WiFi.status() == WL_CONNECTED) {
     tft.print(WiFi.localIP());
-  } else if (!wifiWanted) {
+  } else if (knownCount == 0) {
     tft.setTextSize(1);
     tft.setCursor(10, 12);
-    tft.print("no wifi set - send W,ssid,pass");
+    tft.print("no wifi set - use Pulse Control or USB");
   } else {
-    tft.print("connecting...");
+    tft.setTextSize(1);
+    tft.setCursor(10, 12);
+    tft.print("joining ");
+    tft.print(knownSsid[wifiTry < knownCount ? wifiTry : 0]);
+    tft.print("...");
+  }
+  drawWearer();                  // the clear above wiped it
+}
+
+// The wearer, top-right of the header. Size 2 when it fits beside the IP
+// (which ends around x=190), size 1 for longer names, cut with ".." past that.
+void drawWearer() {
+  const int x0 = 196, w = 320 - x0;
+  tft.fillRect(x0, 0, w, 30, ILI9341_BLACK);
+  const char *nm = hostSubject;
+  int n = strlen(nm);
+  if (n == 0) return;                      // nobody assigned: say nothing
+  char buf[28];
+  int size = (n * 12 <= w - 4) ? 2 : 1;
+  int maxc = (w - 4) / (6 * size);
+  if (n > maxc) {
+    snprintf(buf, sizeof(buf), "%.*s..", maxc - 2, nm);
+  } else {
+    snprintf(buf, sizeof(buf), "%s", nm);
+  }
+  tft.setTextSize(size);
+  tft.setTextColor(ILI9341_WHITE);
+  tft.setCursor(320 - 4 - (int)strlen(buf) * 6 * size, size == 2 ? 8 : 12);
+  tft.print(buf);
+}
+
+// called from the main loop: repaint the name if the master changed it, and
+// remember it across a reboot. NVS is only written when it actually changed.
+void wearerPoll() {
+  if (!wearerDirty) return;
+  wearerDirty = false;
+  drawWearer();
+  prefs.begin("ui", false);
+  if (prefs.getString("wearer", "") != String(hostSubject)) {
+    prefs.putString("wearer", hostSubject);
+  }
+  prefs.end();
+}
+
+void wearerLoad() {
+  prefs.begin("ui", true);
+  String w = prefs.getString("wearer", "");
+  prefs.end();
+  strncpy(hostSubject, w.c_str(), sizeof(hostSubject) - 1);
+  hostSubject[sizeof(hostSubject) - 1] = 0;
+  wearerDirty = true;
+}
+
+int wifiFind(const String &ssid) {
+  for (int i = 0; i < knownCount; i++) {
+    if (knownSsid[i] == ssid) return i;
+  }
+  return -1;
+}
+
+// the list -> NVS. the secrets.h entry is never written: it already lives in
+// the firmware, and storing it would let a stale copy outlive an edit
+void wifiStore() {
+  int n = knownCount - (knownFromHeader ? 1 : 0);
+  prefs.begin("netcfg", false);
+  prefs.putUChar("n", (uint8_t)n);
+  for (int i = 0; i < WIFI_MAX_KNOWN; i++) {
+    char ks[4], kp[4];
+    snprintf(ks, sizeof(ks), "s%d", i);
+    snprintf(kp, sizeof(kp), "p%d", i);
+    if (i < n) {
+      prefs.putString(ks, knownSsid[i]);
+      prefs.putString(kp, knownPass[i]);
+    } else {
+      prefs.remove(ks);
+      prefs.remove(kp);
+    }
+  }
+  prefs.end();
+}
+
+void wifiStripHeader() {
+  if (knownFromHeader) {
+    knownCount--;
+    knownFromHeader = false;
   }
 }
 
-void wifiConnect() {
-  if (!wifiWanted) {
-    return;
+void wifiAddHeader() {
+  String h = String(WIFI_SSID);
+  if (h.length() > 0 && wifiFind(h) < 0 && knownCount < WIFI_MAX_KNOWN) {
+    knownSsid[knownCount] = h;
+    knownPass[knownCount] = String(WIFI_PASS);
+    knownCount++;
+    knownFromHeader = true;
   }
+}
+
+// remember a network: first in the list, or last. copies its arguments first,
+// because callers may pass an element of the list that is about to move
+void wifiRemember(String ssid, String pass, bool first) {
+  wifiStripHeader();
+  int i = wifiFind(ssid);
+  if (i < 0) {
+    if (knownCount < WIFI_MAX_KNOWN) {
+      i = knownCount++;
+    } else {
+      i = WIFI_MAX_KNOWN - 1;          // full: the least recently used goes
+    }
+  }
+  if (first) {
+    for (int k = i; k > 0; k--) {
+      knownSsid[k] = knownSsid[k - 1];
+      knownPass[k] = knownPass[k - 1];
+    }
+    i = 0;
+  }
+  knownSsid[i] = ssid;
+  knownPass[i] = pass;
+  wifiAddHeader();
+  wifiStore();
+}
+
+void wifiForget(String ssid) {
+  wifiStripHeader();
+  int i = wifiFind(ssid);
+  if (i >= 0) {
+    for (int k = i; k < knownCount - 1; k++) {
+      knownSsid[k] = knownSsid[k + 1];
+      knownPass[k] = knownPass[k + 1];
+    }
+    knownCount--;
+  }
+  wifiAddHeader();
+  wifiStore();
+}
+
+// a network that failed a "join now" goes to the back of the queue, so the
+// next boot does not spend its first 15 s on a password that was wrong
+void wifiDemote(String ssid) {
+  int i = wifiFind(ssid);
+  if (i < 0 || (knownFromHeader && i == knownCount - 1)) return;
+  String p = knownPass[i];
+  wifiStripHeader();
+  for (int k = i; k < knownCount - 1; k++) {
+    knownSsid[k] = knownSsid[k + 1];
+    knownPass[k] = knownPass[k + 1];
+  }
+  knownSsid[knownCount - 1] = ssid;
+  knownPass[knownCount - 1] = p;
+  wifiAddHeader();
+  wifiStore();
+}
+
+void wifiBegin(int i) {
+  if (i < 0 || i >= knownCount) return;
+  wifiTry = i;
+  wifiTryMs = millis();
+  WiFi.disconnect();
+  WiFi.begin(knownSsid[i].c_str(), knownPass[i].length() ? knownPass[i].c_str() : NULL);
+  Serial.print("# wifi trying ");
+  Serial.println(knownSsid[i]);
+  wifiShowStatus();
+}
+
+void wifiConnect() {
   WiFi.mode(WIFI_STA);
   {
     // WiFi.macAddress() reads the WiFi DRIVER, which is not up yet -- begin() is
-    // three lines below -- so it returned 00:00:00 and every board called itself
+    // further down -- so it returned 00:00:00 and every board called itself
     // "pulse-000000". Harmless with one board; with two they collide in the
     // roster and the store, since the id is what everything keys on.
     // esp_read_mac() reads the eFuse, which is valid from power-on.
@@ -1515,81 +1773,198 @@ void wifiConnect() {
   // Full transmit power is what makes the 3.3 V rail sag hard enough to take the
   // sensor down with it. At -59 dBm there is plenty of link margin to give back.
   WiFi.setTxPower(WIFI_POWER_11dBm);
-  WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
-  Serial.print("# wifi connecting to ");
-  Serial.println(wifiSsid);
-  wifiRetryMs = millis();
+  if (knownCount > 0) {
+    wifiBegin(0);
+  }
 }
 
 void wifiLoad() {
-  prefs.begin("netcfg", true);
-  wifiSsid = prefs.getString("ssid", "");
-  wifiPass = prefs.getString("pass", "");
-  prefs.end();
-
-  // Anything stored on the board wins: it survives a reflash, so a network set
-  // once from the host is not silently undone by whatever secrets.h happens to
-  // hold. Clear it with `device_wifi --forget` to fall back to the header.
-  if (wifiSsid.length() == 0) {
-    wifiSsid = String(WIFI_SSID);
-    wifiPass = String(WIFI_PASS);
-    if (wifiSsid.length() > 0) {
-      Serial.println("# wifi using secrets.h");
-    }
-  } else {
-    Serial.println("# wifi using stored credentials");
-  }
-
-  wifiWanted = wifiSsid.length() > 0;
-  if (!wifiWanted) {
-    Serial.println("# wifi not configured - set secrets.h, or send W,<ssid>,<password>");
-  }
-}
-
-void wifiSave(const String &ssid, const String &pass) {
+  if (wifiLock == NULL) wifiLock = xSemaphoreCreateMutex();
   prefs.begin("netcfg", false);
-  prefs.putString("ssid", ssid);
-  prefs.putString("pass", pass);
+  int n = prefs.getUChar("n", 0);
+  // one-time migration from the single-network layout ("ssid"/"pass"), so a
+  // board that was already set up keeps its network across this firmware
+  if (n == 0 && prefs.isKey("ssid")) {
+    String s0 = prefs.getString("ssid", "");
+    String p0 = prefs.getString("pass", "");
+    prefs.remove("ssid");
+    prefs.remove("pass");
+    if (s0.length() > 0) {
+      prefs.putString("s0", s0);
+      prefs.putString("p0", p0);
+      prefs.putUChar("n", 1);
+      n = 1;
+    }
+  }
+  knownCount = 0;
+  for (int i = 0; i < n && i < WIFI_MAX_KNOWN; i++) {
+    char ks[4], kp[4];
+    snprintf(ks, sizeof(ks), "s%d", i);
+    snprintf(kp, sizeof(kp), "p%d", i);
+    String sv = prefs.getString(ks, "");
+    if (sv.length() > 0) {
+      knownSsid[knownCount] = sv;
+      knownPass[knownCount] = prefs.getString(kp, "");
+      knownCount++;
+    }
+  }
   prefs.end();
-  wifiSsid = ssid;
-  wifiPass = pass;
-  wifiWanted = ssid.length() > 0;
-  Serial.print("# wifi saved ssid=");
-  Serial.println(ssid);
-  WiFi.disconnect();
-  wifiConnect();
+  knownFromHeader = false;
+  wifiAddHeader();
+  Serial.print("# wifi knows ");
+  Serial.print(knownCount);
+  Serial.print(" network(s)");
+  for (int i = 0; i < knownCount; i++) {
+    Serial.print(i ? ", " : ": ");
+    Serial.print(knownSsid[i]);
+  }
+  Serial.println();
+  if (knownCount == 0) {
+    Serial.println("# wifi not configured - use Pulse Control, set secrets.h, or send W,<ssid>,<password>");
+  }
 }
 
 void wifiReport() {
   Serial.print("# wifi ssid=");
-  Serial.print(wifiSsid.length() ? wifiSsid : String("(none)"));
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print(WiFi.SSID());
+  } else {
+    Serial.print("(none)");
+  }
   Serial.print(" status=");
   Serial.print((int)WiFi.status());
   Serial.print(" ip=");
-  Serial.println(WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString()
-                                               : String("-"));
+  Serial.print(WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : String("-"));
+  Serial.print(" known=");
+  for (int i = 0; i < knownCount; i++) {
+    if (i) Serial.print("|");
+    Serial.print(knownSsid[i]);
+  }
+  Serial.println();
 }
 
-// Called from the sample loop: repaint on any change, and retry a dropped
-// connection every 10 s. Never blocks -- the sensor read loop must keep running
-// whether or not the network is up.
+// queue a change; false if one is already waiting
+bool wifiRequest(int8_t act, const char *ssid, const char *pass) {
+  if (wifiPend != 0) return false;
+  strncpy(wifiPendSsid, ssid ? ssid : "", sizeof(wifiPendSsid) - 1);
+  wifiPendSsid[sizeof(wifiPendSsid) - 1] = 0;
+  strncpy(wifiPendPass, pass ? pass : "", sizeof(wifiPendPass) - 1);
+  wifiPendPass[sizeof(wifiPendPass) - 1] = 0;
+  wifiPend = act;
+  return true;
+}
+
+// JSON string body, escaped. SSIDs are free text and may hold quotes.
+String jsonEsc(const String &in) {
+  String o;
+  o.reserve(in.length() + 4);
+  for (size_t i = 0; i < in.length(); i++) {
+    char c = in[i];
+    if (c == '"' || c == '\\') {
+      o += '\\';
+      o += c;
+    } else if ((uint8_t)c < 0x20) {
+      o += ' ';
+    } else {
+      o += c;
+    }
+  }
+  return o;
+}
+
+// Called from the sample loop. Never blocks -- the sensor read loop must keep
+// running whether or not the network is up.
 void wifiPoll() {
+  // 1. apply whatever the web or serial asked for
+  int8_t act = wifiPend;
+  if (act != 0) {
+    String rs(wifiPendSsid), rp(wifiPendPass);
+    memset(wifiPendPass, 0, sizeof(wifiPendPass));
+    bool forgotCurrent = false;
+    if (wifiLock) xSemaphoreTake(wifiLock, portMAX_DELAY);
+    if (act == 1) {
+      wifiRemember(rs, rp, false);
+      Serial.print("# wifi saved ssid=");
+      Serial.println(rs);
+    } else if (act == 2) {
+      wifiSwitchBack = (WiFi.status() == WL_CONNECTED) ? WiFi.SSID() : String("");
+      wifiRemember(rs, rp, true);
+      wifiSwitchTo = rs;
+      wifiSwitchMs = millis();
+      snprintf(wifiLastResult, sizeof(wifiLastResult), "switching to %s", rs.c_str());
+      Serial.print("# wifi saved ssid=");
+      Serial.println(rs);
+      Serial.print("# wifi switching to ");
+      Serial.println(rs);
+    } else if (act == 3) {
+      forgotCurrent = (WiFi.status() == WL_CONNECTED && WiFi.SSID() == rs);
+      wifiForget(rs);
+      Serial.print("# wifi forgot ");
+      Serial.println(rs);
+    } else if (act == 4) {
+      wifiStripHeader();
+      knownCount = 0;
+      wifiAddHeader();
+      wifiStore();
+      forgotCurrent = true;
+      Serial.println("# wifi forgotten");
+    }
+    if (wifiLock) xSemaphoreGive(wifiLock);
+    wifiPend = 0;
+    if (act == 2) {
+      wifiBegin(0);
+    } else if (forgotCurrent) {
+      WiFi.disconnect();
+      if (knownCount > 0) wifiBegin(0);
+      wifiShowStatus();
+    }
+  }
+
   wl_status_t st = WiFi.status();
   if (st != wifiLast) {
     wifiLast = st;
     if (st == WL_CONNECTED) {
+      String now = WiFi.SSID();
       Serial.print("# wifi connected ssid=");
-      Serial.print(WiFi.SSID());
+      Serial.print(now);
       Serial.print(" ip=");
       Serial.println(WiFi.localIP());
       webBegin();                // safe to call repeatedly; starts once
+      if (wifiLock) xSemaphoreTake(wifiLock, portMAX_DELAY);
+      int i = wifiFind(now);
+      if (i > 0) {               // most recently used first, for the next boot
+        wifiRemember(knownSsid[i], knownPass[i], true);
+      }
+      if (wifiSwitchMs != 0 && now == wifiSwitchTo) {
+        snprintf(wifiLastResult, sizeof(wifiLastResult), "joined %s", now.c_str());
+        wifiSwitchMs = 0;
+      }
+      if (wifiLock) xSemaphoreGive(wifiLock);
     }
     wifiShowStatus();
   }
-  if (wifiWanted && st != WL_CONNECTED && (millis() - wifiRetryMs) > 10000) {
-    wifiRetryMs = millis();
-    WiFi.disconnect();
-    WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+
+  // 2. a "join now" in progress: it joined (above), or give up and go back
+  if (wifiSwitchMs != 0) {
+    if (millis() - wifiSwitchMs > WIFI_SWITCH_MS) {
+      if (wifiLock) xSemaphoreTake(wifiLock, portMAX_DELAY);
+      snprintf(wifiLastResult, sizeof(wifiLastResult), "could not join %s%s%s",
+               wifiSwitchTo.c_str(), wifiSwitchBack.length() ? " - back on " : "",
+               wifiSwitchBack.c_str());
+      wifiDemote(wifiSwitchTo);
+      int back = wifiSwitchBack.length() ? wifiFind(wifiSwitchBack) : -1;
+      wifiSwitchMs = 0;
+      if (wifiLock) xSemaphoreGive(wifiLock);
+      Serial.print("# wifi ");
+      Serial.println(wifiLastResult);
+      wifiBegin(back >= 0 ? back : 0);
+    }
+    return;                      // no rotating while a switch decides
+  }
+
+  // 3. not connected: the next known network, every WIFI_TRY_MS
+  if (knownCount > 0 && st != WL_CONNECTED && (millis() - wifiTryMs) > WIFI_TRY_MS) {
+    wifiBegin((wifiTry + 1) % knownCount);
   }
 }
 
@@ -1610,19 +1985,23 @@ void pollHostSerial() {
       } else if (rxLen >= 2 && rxLine[0] == 'W' && rxLine[1] == '?') {
         wifiReport();
       } else if (rxLen >= 2 && rxLine[0] == 'W' && rxLine[1] == '!') {
-        wifiSave("", "");
-        Serial.println("# wifi forgotten");
-      } else if (rxLen > 3 && rxLine[0] == 'W' && rxLine[1] == ',') {
-        // "W,<ssid>,<password>" -- split on the FIRST comma after the prefix,
-        // so a password may contain commas even though an SSID may not.
+        if (wifiRequest(4, "", "")) wifiPoll();          // forget every network
+        else Serial.println("# wifi busy");
+      } else if (rxLen > 2 && rxLine[0] == 'F' && rxLine[1] == ',') {
+        if (wifiRequest(3, &rxLine[2], "")) wifiPoll();  // "F,<ssid>": forget one
+        else Serial.println("# wifi busy");
+      } else if (rxLen > 3 && (rxLine[0] == 'W' || rxLine[0] == 'N') && rxLine[1] == ',') {
+        // "W,<ssid>,<password>" join now  ·  "N,<ssid>,<password>" save for later.
+        // split on the FIRST comma after the prefix, so a password may contain
+        // commas even though an SSID may not.
         char *body = &rxLine[2];
         char *comma = strchr(body, ',');
         if (comma != NULL) {
           *comma = '\0';
-          wifiSave(String(body), String(comma + 1));
-          wifiShowStatus();
+          if (wifiRequest(rxLine[0] == 'W' ? 2 : 1, body, comma + 1)) wifiPoll();
+          else Serial.println("# wifi busy");
         } else {
-          Serial.println("# usage: W,<ssid>,<password>");
+          Serial.println("# usage: W,<ssid>,<password> (join now) or N,<ssid>,<password> (save)");
         }
       } else if (rxLen > 3 && rxLine[0] == 'S' && rxLine[1] == ',') {
         // "S,<flag>,<level>"  e.g. S,0,18
@@ -1755,7 +2134,7 @@ void readInitialSamples() {
       pollHostSerial();
       irDcDisplay = (irDcDisplay == 0) ? ir : (irDcDisplay * 15 + ir) / 16;
       condFeed(timestamp, ir);
-      if ((statSamples & 0xFF) == 0) wifiPoll();
+      if ((statSamples & 0xFF) == 0 || wifiPend != 0) wifiPoll();
       if (millis() - hrLastCompute > 1000) {   // once a second, like the host
         hrLastCompute = millis();
         hrCompute();
@@ -1810,6 +2189,14 @@ void calculateReadings() {
 // =====================================================
 // Setup
 // =====================================================
+// The devkit's RGB LED (GPIO 48) keeps whatever colour it last received, so a
+// stray pulse on its pin can leave it full white. Cleared at every boot.
+void rgbOff() {
+#ifdef PIN_RGB_LED
+  rgbLedWrite(PIN_RGB_LED, 0, 0, 0);
+#endif
+}
+
 void setup() {
   Serial.begin(STREAM_BAUD);
 
@@ -1838,6 +2225,7 @@ void setup() {
   delay(200);
 
   streamBanner();
+  rgbOff();                      // whatever an earlier firmware left on the RGB LED
 
   // Start display SPI
   displaySPI.begin(
@@ -1853,6 +2241,7 @@ void setup() {
   drawInterface();
 
   // Start I2C for MAX30102
+  wearerLoad();                  // the last wearer, until the master says otherwise
   wifiLoad();
   wifiConnect();
   wifiShowStatus();
@@ -1941,7 +2330,7 @@ void loop() {
       pollHostSerial();
       irDcDisplay = (irDcDisplay == 0) ? ir : (irDcDisplay * 15 + ir) / 16;
       condFeed(timestamp, ir);
-      if ((statSamples & 0xFF) == 0) wifiPoll();
+      if ((statSamples & 0xFF) == 0 || wifiPend != 0) wifiPoll();
       if (millis() - hrLastCompute > 1000) {   // once a second, like the host
         hrLastCompute = millis();
         hrCompute();
