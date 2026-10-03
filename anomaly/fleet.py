@@ -959,6 +959,24 @@ class Fleet:
                 dev.ws = None
                 await asyncio.sleep(3.0)
 
+    async def hotspot_loop(self, every: float = 30.0):
+        """keep the Windows hotspot up. Windows switches it off after a few idle
+        minutes by default, and a board that rebooted meanwhile has nothing to
+        rejoin -- it just sits there failing to connect, which looks like a
+        dead board rather than a closed network."""
+        from . import hotspot
+        loop = asyncio.get_running_loop()
+        while True:
+            await asyncio.sleep(every)
+            try:
+                cfg = await loop.run_in_executor(NET, hotspot.config)
+                if cfg.get("state") != "On":
+                    print("  hotspot went off -- switching it back on", flush=True)
+                    await loop.run_in_executor(NET, hotspot.ensure_on)
+                    asyncio.create_task(self.discover())
+            except hotspot.HotspotError as e:
+                print(f"  hotspot: {e}", flush=True)
+
     async def rescan_loop(self, every: float):
         while True:
             await asyncio.sleep(every)
@@ -1231,7 +1249,23 @@ def build_app(fleet: Fleet):
 async def amain(args) -> int:
     from .infer import LiveAnomalyDetector
 
+    if args.hotspot:
+        # before working out the subnets: the hotspot's adapter only has an
+        # address once the hotspot is up
+        from . import hotspot
+        try:
+            cfg = hotspot.ensure_on()
+            print("  " + hotspot.describe(cfg), flush=True)
+            bad = hotspot.band_problem(cfg)
+            if bad:
+                print("  WARNING: " + bad, flush=True)
+        except hotspot.HotspotError as e:
+            print(f"  hotspot: {e} -- carrying on without it", flush=True)
     subnets = [args.subnet] if args.subnet else local_subnets()
+    if args.hotspot:
+        from .hotspot import SUBNET
+        if SUBNET not in subnets:     # the adapter can take a moment to get its IP
+            subnets.append(SUBNET)
     if not subnets:
         print("  could not work out this machine's subnet; pass --subnet 192.168.1")
         return 1
@@ -1279,6 +1313,8 @@ async def amain(args) -> int:
               + ", ".join(f"{n}.1-254" for n in subnets) + ")")
     asyncio.create_task(fleet.rescan_loop(args.rescan))
     asyncio.create_task(fleet.housekeeping_loop())
+    if args.hotspot:
+        asyncio.create_task(fleet.hotspot_loop())
 
     import uvicorn
     print(f"\n  roster -> http://localhost:{args.port}\n")
@@ -1297,6 +1333,8 @@ def main() -> int:
     ap.add_argument("--rescan", type=float, default=30.0,
                     help="seconds between rescans (default 30)")
     ap.add_argument("--db", default=DB_PATH, help=f"the store (default {DB_PATH})")
+    ap.add_argument("--hotspot", action="store_true",
+                    help="switch this PC's Windows hotspot on, scan it, and keep it on")
     args = ap.parse_args()
     try:
         return asyncio.run(amain(args))

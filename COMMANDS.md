@@ -28,7 +28,8 @@ or `fastapi`) means, every time. first-time setup is section 1.
 | `sketch_aug3a/make_web_assets.py` | **required** | rebuild the board's web pages. after ANY dashboard edit, and on every fresh clone |
 | `anomaly.serve` | current | single-stream dashboard at :8001 — WESAD replay, or one board over USB |
 | `anomaly.db` | current | inspect the store, take a backup |
-| `anomaly.device_wifi` | current | put a board on WiFi over USB, read back its IP |
+| `anomaly.device_wifi` | current | put a board on WiFi over USB, read back its IP. `--hotspot` = this PC's hotspot, no password |
+| `anomaly.hotspot` | current | the Windows hotspot: state, or `--on` |
 | `anomaly.device_check` | current | live grip coach — is the finger on properly? |
 | `anomaly.device_source` | current | sensor self-test, no model and no dashboard in the way |
 | `anomaly.device_calibrate` | current, USB only | re-derive thresholds on your own calm, for `serve --source device` |
@@ -150,9 +151,13 @@ only) into `Code & Data/` — [Borealis Data](https://borealisdata.ca/dataset.xh
 ### 2.1 the master
 
 ```bash
+python -m anomaly.fleet --hotspot        # boards on this PC's hotspot (recommended)
 python -m anomaly.fleet                  # roster -> http://localhost:8002
 python -m anomaly.fleet --subnet 192.168.1   # only if a board is on another network
 ```
+
+`--hotspot` switches the Windows Mobile Hotspot on, scans its network
+(`192.168.137.x`), and switches it back on whenever Windows drops it.
 
 scans every local subnet for boards, scores each one, pushes each verdict back.
 no IP to look up. assign a subject to each board from the roster, then
@@ -173,15 +178,38 @@ done from the roster, not the command line:
 - **tuning** — live sliders for the detection constants, persisted across
   restarts
 
-useful flags: `--device <ip>` (repeatable, for a board off this subnet),
-`--port`, `--rescan <seconds>`, `--db <path>`.
+useful flags: `--hotspot`, `--device <ip>` (repeatable, for a board off this
+subnet), `--port`, `--rescan <seconds>`, `--db <path>`.
 
 ### 2.2 the board
 
-**put it on WiFi.** two ways; anything stored on the board wins over the header,
-since NVS survives a reflash.
+**put it on WiFi.** easiest: join this PC's own Windows hotspot. the PC sits next
+to the board, so range stops being a problem. plug the board in by USB once and:
 
-hard-coded (recommended): copy `sketch_aug3a/secrets.example.h` to
+```bash
+python -m anomaly.device_wifi --hotspot
+```
+
+no password to type: it reads the hotspot's name and password from Windows,
+switches the hotspot on if needed, sends them down the cable, and prints the
+board's IP. nothing is printed or saved. from then on the board rejoins the
+hotspot on every boot by itself. `python -m anomaly.hotspot` shows its state
+(never the password).
+
+two Windows habits to know:
+
+- **turn off power saving** — Settings → Network & internet → Mobile hotspot →
+  Power saving. otherwise Windows switches the hotspot off after a few idle
+  minutes and a rebooting board has nothing to rejoin (`fleet --hotspot` also
+  switches it back on)
+- **it needs a connection to share** (Ethernet / WiFi with internet). no
+  internet in the room = no hotspot; keep a phone hotspot as the fallback and
+  point the board at it with `--ssid`
+
+the other two ways; anything stored on the board wins over the header, since
+NVS survives a reflash.
+
+hard-coded: copy `sketch_aug3a/secrets.example.h` to
 `sketch_aug3a/secrets.h` (gitignored) and fill in `WIFI_SSID` / `WIFI_PASS`.
 if the board already has credentials stored, clear them once and power-cycle:
 

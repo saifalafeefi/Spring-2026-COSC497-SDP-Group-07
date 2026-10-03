@@ -4,9 +4,15 @@ the ESP32 keeps the SSID and password in NVS, so they survive a reflash and neve
 sit in source control. this just types the command down the same serial link the
 dashboard uses:
 
+    python3 -m anomaly.device_wifi --hotspot       # join THIS PC's Windows hotspot
     python3 -m anomaly.device_wifi --ssid MyNetwork --password hunter2
     python3 -m anomaly.device_wifi --status        # what is it connected to?
     python3 -m anomaly.device_wifi --forget
+
+--hotspot needs no password from you: it reads the hotspot's name and password
+from Windows (anomaly.hotspot), switches the hotspot on if it is off, and sends
+them down the cable. nothing is typed, printed or saved. once done, the board
+rejoins that hotspot by itself on every boot.
 
 stop the dashboard first -- only one process can hold the port.
 """
@@ -48,6 +54,8 @@ def _drain(ser, seconds: float = 6.0, want: str = "") -> list:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--hotspot", action="store_true",
+                    help="join this PC's Windows Mobile Hotspot -- no password needed")
     ap.add_argument("--ssid")
     ap.add_argument("--password", help="omit to be prompted without echoing")
     ap.add_argument("--status", action="store_true", help="report SSID and IP")
@@ -56,8 +64,28 @@ def main() -> int:
     ap.add_argument("--baud", type=int, default=DEFAULT_BAUD)
     args = ap.parse_args()
 
-    if not (args.status or args.forget or args.ssid):
-        ap.error("give --ssid, or --status, or --forget")
+    if not (args.status or args.forget or args.ssid or args.hotspot):
+        ap.error("give --hotspot, --ssid, --status or --forget")
+
+    pw = args.password
+    if args.hotspot:
+        # BEFORE opening the port: opening it resets the board, and it should
+        # come back up with the hotspot already there to join
+        from . import hotspot
+        try:
+            cfg = hotspot.config()
+            bad = hotspot.band_problem(cfg)
+            if bad:
+                raise SystemExit("  " + bad)
+            if cfg.get("state") != "On":
+                print("  switching the hotspot on…")
+                cfg = hotspot.ensure_on()
+        except hotspot.HotspotError as e:
+            raise SystemExit("  %s" % e)
+        print("  " + hotspot.describe(cfg))
+        args.ssid, pw = cfg["ssid"], cfg["passphrase"]
+        if not pw:
+            raise SystemExit("  the hotspot has no password set -- the board needs one (WPA2)")
 
     ser, port = _open(args.port, args.baud)
     print(f"\n  board on {port}")
@@ -69,7 +97,6 @@ def main() -> int:
             ser.write(b"W!\n")
             _drain(ser, 3.0, want="forgotten")
         else:
-            pw = args.password
             if pw is None:
                 pw = getpass.getpass("  password (not echoed): ")
             if "," in args.ssid:
@@ -96,7 +123,13 @@ def main() -> int:
             if not any("wifi connected" in l for l in log):
                 print("\n  no IP. check the SSID and password, and that the network")
                 print("  is 2.4 GHz -- the ESP32 cannot join a 5 GHz-only SSID.")
+                if args.hotspot:
+                    print("  also: the board must be in range of THIS PC, and the")
+                    print("  hotspot caps clients (python -m anomaly.hotspot).")
                 return 1
+            if args.hotspot:
+                print(f"\n  done. it rejoins {args.ssid!r} by itself from now on, whenever")
+                print("  the hotspot is on. run the fleet with:  python -m anomaly.fleet --hotspot")
     finally:
         ser.close()
     print()
